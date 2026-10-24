@@ -1,7 +1,7 @@
 @extends('layouts.parkir')
 @section('title', 'Paket & Harga')
 @section('heading', 'Paket & Harga')
-@section('subheading', 'Atur paket langganan dan harga per jenis kendaraan')
+@section('subheading', 'Atur paket langganan dan harga per mobil')
 
 @php
     $editingPlan = $plans->firstWhere('id', old('edit_id'));
@@ -18,12 +18,6 @@
         gap:12px;
         flex-wrap:wrap;
         margin-bottom:20px;
-    }
-
-    .pk-grid {
-        display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:14px;
     }
 
     .pk-quick {
@@ -198,7 +192,7 @@
     }
 
     .pk-table-wrap table {
-        min-width:760px;
+        min-width:680px;
         width:100%;
     }
 
@@ -231,11 +225,6 @@
     }
 
     @media(max-width:640px) {
-        .pk-grid {
-            grid-template-columns:1fr;
-            gap:0;
-        }
-
         .pk-modal {
             padding:10px;
             align-items:center;
@@ -291,8 +280,7 @@
                 <tr>
                     <th>Paket</th>
                     <th>Durasi</th>
-                    <th>Harga motor</th>
-                    <th>Harga mobil</th>
+                    <th>Harga per mobil</th>
                     <th>Status</th>
                     <th style="text-align:right">Aksi</th>
                 </tr>
@@ -324,10 +312,6 @@
                         <td>{{ $p->duration_days }} hari</td>
 
                         <td>
-                            Rp {{ number_format($p->price_motor, 0, ',', '.') }}
-                        </td>
-
-                        <td>
                             Rp {{ number_format($p->price_mobil, 0, ',', '.') }}
                         </td>
 
@@ -351,7 +335,6 @@
                                     data-id="{{ $p->id }}"
                                     data-name="{{ $p->name }}"
                                     data-duration="{{ $p->duration_days }}"
-                                    data-motor="{{ (int) $p->price_motor }}"
                                     data-mobil="{{ (int) $p->price_mobil }}"
                                     data-description="{{ $p->description }}"
                                     data-sort="{{ $p->sort_order }}"
@@ -397,7 +380,7 @@
 
                 @empty
                     <tr>
-                        <td colspan="6" class="empty">
+                        <td colspan="5" class="empty">
                             Belum ada paket. Klik "Tambah Paket" untuk membuat paket pertama.
                         </td>
                     </tr>
@@ -475,6 +458,10 @@
                     value="{{ old('edit_id', $editingPlan->id ?? '') }}"
                 >
 
+                {{-- Harga motor sudah tidak dipakai (khusus mobil). Tetap dikirim 0 supaya validasi di
+                     PaketController yang masih mewajibkan price_motor tidak menolak form. --}}
+                <input type="hidden" name="price_motor" value="0">
+
                 <div class="field">
                     <label for="name">Nama paket</label>
 
@@ -525,46 +512,26 @@
                     @enderror
                 </div>
 
-                <div class="pk-grid">
-                    <div class="field">
-                        <label for="price_motor">Harga motor (Rp)</label>
+                <div class="field" style="max-width:280px">
+                    <label for="price_mobil">Harga per mobil (Rp)</label>
 
-                        <input
-                            id="price_motor"
-                            type="number"
-                            name="price_motor"
-                            min="0"
-                            inputmode="numeric"
-                            value="{{ old('price_motor', $editingPlan ? (int) $editingPlan->price_motor : '') }}"
-                            required
-                        >
+                    <input
+                        id="price_mobil"
+                        type="number"
+                        name="price_mobil"
+                        min="0"
+                        inputmode="numeric"
+                        value="{{ old('price_mobil', $editingPlan ? (int) $editingPlan->price_mobil : '') }}"
+                        required
+                    >
 
-                        @error('price_motor')
-                            <div class="err">{{ $message }}</div>
-                        @enderror
+                    <div class="pk-field-note">
+                        Member dengan beberapa mobil ditagih sesuai jumlah mobilnya.
                     </div>
 
-                    <div class="field">
-                        <label for="price_mobil">Harga mobil (Rp)</label>
-
-                        <input
-                            id="price_mobil"
-                            type="number"
-                            name="price_mobil"
-                            min="0"
-                            inputmode="numeric"
-                            value="{{ old('price_mobil', $editingPlan ? (int) $editingPlan->price_mobil : '') }}"
-                            required
-                        >
-
-                        @error('price_mobil')
-                            <div class="err">{{ $message }}</div>
-                        @enderror
-                    </div>
-                </div>
-
-                <div class="pk-field-note" style="margin-top:-6px;margin-bottom:16px">
-                    Member dengan beberapa kendaraan ditagih sesuai jenis tiap kendaraannya.
+                    @error('price_mobil')
+                        <div class="err">{{ $message }}</div>
+                    @enderror
                 </div>
 
                 <div class="field">
@@ -670,7 +637,6 @@
     const fields = {
         name: document.getElementById('name'),
         duration: document.getElementById('duration_days'),
-        motor: document.getElementById('price_motor'),
         mobil: document.getElementById('price_mobil'),
         description: document.getElementById('description'),
         sort: document.getElementById('sort_order'),
@@ -728,7 +694,6 @@
         editId.value = button.dataset.id;
         fields.name.value = button.dataset.name;
         fields.duration.value = button.dataset.duration;
-        fields.motor.value = button.dataset.motor;
         fields.mobil.value = button.dataset.mobil;
         fields.description.value = button.dataset.description;
         fields.sort.value = button.dataset.sort;
