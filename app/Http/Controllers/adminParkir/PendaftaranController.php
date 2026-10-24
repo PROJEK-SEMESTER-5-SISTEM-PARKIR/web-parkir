@@ -13,7 +13,9 @@ use App\Models\Vehicle;
 use App\Services\SlotService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -28,6 +30,10 @@ class PendaftaranController extends Controller
     /** Jumlah minimal frame yang dikirim browser (Python tetap menyaring yang wajahnya terdeteksi). */
     private const MIN_FRAMES = 15;
 
+    /** Cek wajah ganda di server: jumlah frame sampel & minimal yang harus cocok ke member yang sama. */
+    private const DUP_SAMPLE = 5;
+    private const DUP_MIN_HITS = 3;
+
     public function index(): View
     {
         return view('admin_parkir.pendaftaran', [
@@ -35,6 +41,38 @@ class PendaftaranController extends Controller
                 ->orderBy('sort_order')
                 ->get(),
             'slots' => app(SlotService::class)->ringkasan(),
+        ]);
+    }
+
+    /**
+     * Dipanggil browser per frame saat pengambilan foto (AJAX).
+     * Meneruskan frame ke Python /recognize untuk tahu:
+     *   - apakah wajah terdeteksi (Haar cascade)
+     *   - apakah wajah ini sudah terdaftar sebagai member lain (LBPH)
+     */
+    public function cekWajah(Request $request): JsonResponse
+    {
+        $request->validate([
+            'photo' => ['required', 'file', 'image', 'max:4096'],
+        ]);
+
+        try {
+            $hasil = $this->kenali(file_get_contents($request->file('photo')->getRealPath()));
+        } catch (ConnectionException) {
+            return response()->json([
+                'error' => 'Layanan pengenalan wajah tidak bisa dihubungi. Pastikan Python service sedang berjalan.',
+            ], 503);
+        } catch (FaceEnrollmentException $e) {
+            return response()->json(['error' => $e->getMessage()], 502);
+        }
+
+        $member = $hasil['member_id'] ? Member::find($hasil['member_id']) : null;
+
+        return response()->json([
+            'face' => $hasil['face'],
+            'duplicate' => $member !== null,
+            'member_id' => $member?->id,
+            'name' => $member?->name,
         ]);
     }
 
@@ -92,6 +130,13 @@ class PendaftaranController extends Controller
         if ($taken->isNotEmpty()) {
             return back()->withInput()->withErrors([
                 'plates' => 'Plat nomor sudah terdaftar: '.$taken->map(fn ($p) => $this->formatPlate($p))->implode(', '),
+            ]);
+        }
+
+        // Wajah: pengaman di server kalau wajah ini ternyata sudah terdaftar sebagai member lain
+        if ($ada = $this->wajahSudahTerdaftar($photos)) {
+            return back()->withInput()->withErrors([
+                'photos' => "Wajah sudah terdaftar sebagai {$ada->name}. Satu orang hanya boleh punya satu akun member.",
             ]);
         }
 
@@ -222,6 +267,82 @@ class PendaftaranController extends Controller
                 'end' => $end->copy()->locale('id')->translatedFormat('j M Y'),
             ],
         ]);
+    }
+
+    /**
+     * Kirim satu frame ke Python /recognize.
+     *  - 422 dari Python  -> wajah tidak terdeteksi
+     *  - 503 dari Python  -> wajah terdeteksi, tapi model belum pernah dilatih (belum ada member)
+     *  - 200              -> wajah terdeteksi; "matched" true bila cocok dengan member yang ada
+     *
+     * @return array{face: bool, member_id: ?int}
+     *
+     * @throws ConnectionException
+     * @throws FaceEnrollmentException
+     */
+    private function kenali(string $isiFoto): array
+    {
+        $response = Http::timeout(15)
+            ->attach('photo', $isiFoto, 'frame.jpg')
+            ->post(config('services.cv.url', 'http://127.0.0.1:5000').'/recognize');
+
+        if ($response->status() === 422) {
+            return ['face' => false, 'member_id' => null];
+        }
+
+        if ($response->status() === 503) {
+            return ['face' => true, 'member_id' => null];
+        }
+
+        if ($response->failed()) {
+            throw new FaceEnrollmentException(
+                $response->json('error') ?? 'Layanan pengenalan wajah tidak merespons.'
+            );
+        }
+
+        $json = $response->json();
+
+        return [
+            'face' => true,
+            'member_id' => ($json['matched'] ?? false) ? (int) $json['member_id'] : null,
+        ];
+    }
+
+    /**
+     * Pengaman di server: ambil beberapa frame sampel, cek ke Python.
+     * Dianggap sudah terdaftar bila minimal DUP_MIN_HITS frame cocok ke member yang sama.
+     * Kalau Python tidak bisa dihubungi, dilewati (enrollFace nanti akan memberi pesan error yang jelas).
+     *
+     * @param  UploadedFile[]  $photos
+     */
+    private function wajahSudahTerdaftar(array $photos): ?Member
+    {
+        $n = count($photos);
+        $ambil = min(self::DUP_SAMPLE, $n);
+        $hits = [];
+
+        for ($i = 0; $i < $ambil; $i++) {
+            $foto = $photos[intdiv($i * $n, $ambil)];
+
+            try {
+                $hasil = $this->kenali(file_get_contents($foto->getRealPath()));
+            } catch (Throwable) {
+                return null;
+            }
+
+            if ($hasil['member_id']) {
+                $hits[$hasil['member_id']] = ($hits[$hasil['member_id']] ?? 0) + 1;
+            }
+        }
+
+        if ($hits === []) {
+            return null;
+        }
+
+        arsort($hits);
+        $id = array_key_first($hits);
+
+        return $hits[$id] >= self::DUP_MIN_HITS ? Member::find($id) : null;
     }
 
     /**

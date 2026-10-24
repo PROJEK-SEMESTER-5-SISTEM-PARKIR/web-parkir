@@ -56,7 +56,8 @@ Route::middleware(['auth', 'role:admin_parkir'])
 
         Route::get('/pendaftaran', [PendaftaranController::class, 'index'])->name('pendaftaran');
         Route::post('/pendaftaran', [PendaftaranController::class, 'store'])->name('pendaftaran.store');
-
+        Route::post('/pendaftaran/cek-wajah', [PendaftaranController::class, 'cekWajah'])
+            ->name('pendaftaran.cek-wajah');
         Route::get('/pelanggan', [PelangganController::class, 'index'])->name('pelanggan');
         Route::post('/pelanggan/{member}/reset-password', [PelangganController::class, 'resetPassword'])->name('pelanggan.reset');
         Route::get('/pelanggan/{member}/foto', [PelangganController::class, 'foto'])->name('pelanggan.foto');
@@ -97,4 +98,4 @@ Route::middleware(['auth', 'role:superadmin'])
         Route::patch('admins/{admin}/reset-password', [AdminAccountController::class, 'resetPassword'])->name('admins.reset');
     });
 
-require __DIR__.'/auth.php';
+require __DIR__ . '/auth.php';

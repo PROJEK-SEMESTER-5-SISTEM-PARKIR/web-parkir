@@ -94,7 +94,7 @@
     .pd .field input[type=number],
     .pd .field input:not([type]),
     .pd .field select,
-    .pd-plate input,
+    .pd-plate input[type=text],
     .pd-plate select{
         width:100%;height:42px;padding:0 12px;border:1px solid var(--pd-line);border-radius:10px;
         background:#fff;font:inherit;font-size:14px;color:inherit;transition:border-color .15s, box-shadow .15s
@@ -106,8 +106,8 @@
 
     /* ---------- Plat nomor ---------- */
     .pd-plates{display:flex;flex-direction:column;gap:10px}
-    .pd-plate{display:grid;grid-template-columns:minmax(0,1fr) 120px 38px;gap:8px;align-items:center}
-    .pd-plate input{text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+    .pd-plate{display:grid;grid-template-columns:minmax(0,1fr) 38px;gap:8px;align-items:center}
+    .pd-plate input[type=text]{text-transform:uppercase;letter-spacing:.06em;font-weight:600}
     .pd-plate .pd-del{
         width:38px;height:42px;border:1px solid var(--pd-line);border-radius:10px;background:#fff;
         color:var(--pd-muted);font-size:18px;line-height:1;cursor:pointer;transition:all .15s
@@ -166,12 +166,16 @@
     .pd-stage.is-live .pd-guide{display:flex}
     .pd-guide i{
         width:46%;aspect-ratio:3/4;border-radius:50%;border:2px solid rgba(255,255,255,.85);
-        box-shadow:0 0 0 999px rgba(0,0,0,.35)
+        box-shadow:0 0 0 999px rgba(0,0,0,.35);transition:border-color .15s
     }
     .pd-guide em{
-        position:absolute;bottom:14px;left:0;right:0;text-align:center;font-style:normal;
+        position:absolute;bottom:14px;left:12px;right:12px;text-align:center;font-style:normal;
         font-size:14px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7)
     }
+    /* wajah tidak terdeteksi: bingkai & teks jadi merah */
+    .pd-stage.no-face .pd-guide i{border-color:#ff5c5c;border-style:dashed}
+    .pd-stage.no-face .pd-guide em{background:rgba(214,69,69,.92);padding:6px 10px;border-radius:8px;text-shadow:none}
+
     .pd-count{
         position:absolute;top:12px;right:12px;display:none;padding:4px 10px;border-radius:999px;
         background:rgba(0,0,0,.55);color:#fff;font-size:13px;font-weight:700;letter-spacing:.03em
@@ -182,6 +186,14 @@
     .pd-progress{display:none;height:6px;margin-top:12px;border-radius:999px;background:var(--pd-line);overflow:hidden}
     .pd-progress.is-on{display:block}
     .pd-progress i{display:block;height:100%;width:0;background:var(--pd-accent);transition:width .25s}
+
+    /* Peringatan (wajah sudah terdaftar, dll.) */
+    .pd-alert{
+        display:none;margin:0 0 14px;padding:12px 14px;border-radius:10px;
+        background:#fdeeee;border:1px solid #f3c4c4;color:#9b2c2c;font-size:13.5px;line-height:1.5
+    }
+    .pd-alert.is-on{display:block}
+    .pd-alert b{font-weight:700}
 
     /* Tombol di bawah panggung */
     .pd-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
@@ -261,10 +273,11 @@
 
                 <div class="pd-plates" id="plateList">
                     <div class="pd-plate">
-    <input type="text" name="plates[]" placeholder="B 1234 ABC" autocomplete="off" required>
-    <input type="hidden" name="vehicle_types[]" value="mobil">
-    <button type="button" class="pd-del is-hidden" aria-label="Hapus plat">&times;</button>
-</div>
+                        <input type="text" name="plates[]" placeholder="B 1234 ABC" autocomplete="off" required>
+                        <input type="hidden" name="vehicle_types[]" value="mobil">
+                        <button type="button" class="pd-del is-hidden" aria-label="Hapus plat">&times;</button>
+                    </div>
+                </div>
 
                 <button type="button" class="pd-add" id="btnAddPlate">+ Tambah kendaraan</button>
                 @error('plates.*') <div class="err">{{ $message }}</div> @enderror
@@ -351,8 +364,17 @@
             <section class="pd-panel">
                 <div class="pd-head">
                     <h3>Foto wajah</h3>
-                    <p>Kamera mengambil 30 foto otomatis untuk melatih pengenalan wajah di gerbang.</p>
+                    <p>Kamera mengambil 30 foto yang wajahnya terdeteksi, untuk melatih pengenalan wajah di gerbang.</p>
                 </div>
+
+                {{-- Peringatan: wajah sudah terdaftar, layanan error, dll. --}}
+                <div class="pd-alert" id="faceAlert" role="alert"></div>
+                @error('photos')
+                    <div class="pd-alert is-on" role="alert">{{ $message }}</div>
+                @enderror
+                @error('photos.*')
+                    <div class="pd-alert is-on" role="alert">{{ $message }}</div>
+                @enderror
 
                 <div class="pd-stage" id="stage">
                     {{-- Kondisi kosong --}}
@@ -390,13 +412,12 @@
                 <input class="pd-file" type="file" name="photos[]" id="photoInput" accept="image/*" multiple tabindex="-1">
 
                 <div class="pd-msg" id="msg" role="status"></div>
-                @error('photos') <div class="err">{{ $message }}</div> @enderror
-                @error('photos.*') <div class="err">{{ $message }}</div> @enderror
 
                 <div class="pd-tips">
                     Pastikan pencahayaan cukup, hanya ada satu orang di depan kamera, dan ikuti petunjuk di layar:
                     hadap lurus, tengok pelan ke kiri dan kanan, lalu angkat dan tundukkan kepala sedikit.
-                    Proses pengambilan sekitar 12 detik.
+                    Foto hanya diambil saat wajah terdeteksi. Jika bingkai berwarna merah, perbaiki posisi atau pencahayaan.
+                    Proses pengambilan sekitar 15&ndash;20 detik.
                 </div>
             </section>
         </aside>
@@ -432,10 +453,10 @@
     document.getElementById('btnAddPlate').addEventListener('click', () => {
         const row = document.createElement('div');
         row.className = 'pd-plate';
-       row.innerHTML = `
-    <input type="text" name="plates[]" placeholder="B 1234 ABC" autocomplete="off">
-    <input type="hidden" name="vehicle_types[]" value="mobil">
-    <button type="button" class="pd-del" aria-label="Hapus plat">&times;</button>`;
+        row.innerHTML = `
+            <input type="text" name="plates[]" placeholder="B 1234 ABC" autocomplete="off">
+            <input type="hidden" name="vehicle_types[]" value="mobil">
+            <button type="button" class="pd-del" aria-label="Hapus plat">&times;</button>`;
         plateList.appendChild(row);
         syncDeleteButtons();
         row.querySelector('input').focus();
@@ -481,8 +502,9 @@
         // Tagihan = jumlah harga tiap kendaraan yang plat-nya sudah diisi
         const jumlah = { motor: 0, mobil: 0 };
         plateList.querySelectorAll('.pd-plate').forEach(row => {
-            if (!row.querySelector('input').value.trim()) return;
-            jumlah[row.querySelector('select').value === 'motor' ? 'motor' : 'mobil']++;
+            if (!row.querySelector('input[name="plates[]"]').value.trim()) return;
+            const jenis = row.querySelector('input[name="vehicle_types[]"]').value;
+            jumlah[jenis === 'motor' ? 'motor' : 'mobil']++;
         });
 
         // Peringatan slot: jumlah kendaraan yang diisi dibanding sisa slot
@@ -520,13 +542,19 @@
     document.getElementById('btnAddPlate').addEventListener('click', hitungPaket); // tambah baris
     hitungPaket();
 
-    // ================= Foto wajah: ambil 30 sampel dari kamera (seperti registrasi.py) =================
-    const TOTAL = 30;          // JUMLAH_FOTO di registrasi.py
-    const JEDA  = 400;         // JEDA_AMBIL (ms) antar foto, supaya variasi posisi ada
+    // ================= Foto wajah: ambil 30 sampel (hanya frame yang wajahnya terdeteksi) =================
+    const TOTAL = 30;          // jumlah foto yang dikumpulkan
+    const JEDA  = 300;         // jeda (ms) antar foto yang DITERIMA, supaya variasi posisi ada
+    const JEDA_TANPA_WAJAH = 150; // jeda (ms) sebelum mencoba lagi bila wajah tidak terdeteksi
+    const MAX_DETIK = 90;      // batas waktu total pengambilan
+    const DUP_HITS  = 3;       // berapa frame harus cocok ke member yang sama sebelum dianggap "sudah terdaftar"
     const LEBAR = 640;         // frame dikecilkan agar upload 30 file tetap ringan
     const KUALITAS = 0.85;
 
-    // Petunjuk gerakan kepala per rentang frame: [mulai dari frame ke-, teks]
+    const CEK_URL = "{{ route('parkir.pendaftaran.cek-wajah') }}";
+    const CSRF    = document.querySelector('#pdForm input[name="_token"]').value;
+
+    // Petunjuk gerakan kepala per jumlah foto yang sudah terkumpul: [mulai dari foto ke-, teks]
     const PETUNJUK = [
         [0,  'Hadap lurus ke kamera'],
         [6,  'Tengok pelan ke kiri'],
@@ -543,6 +571,7 @@
     const shot      = document.getElementById('shot');
     const input     = document.getElementById('photoInput');
     const msg       = document.getElementById('msg');
+    const faceAlert = document.getElementById('faceAlert');
     const guideText = document.getElementById('guideText');
     const countBadge= document.getElementById('countBadge');
     const progress  = document.getElementById('progress');
@@ -563,6 +592,16 @@
         stage.classList.toggle('has-error', !!isError);
     }
 
+    function showAlert(html) {
+        faceAlert.innerHTML = html;
+        faceAlert.classList.add('is-on');
+    }
+    function hideAlert() {
+        faceAlert.textContent = '';
+        faceAlert.classList.remove('is-on');
+    }
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
     // state: 'empty' | 'live' | 'filled'
     function setState(state) {
         stage.classList.toggle('is-live',   state === 'live');
@@ -581,6 +620,7 @@
         if (!on) {
             progressBar.style.width = '0';
             guideText.textContent = GUIDE_DEFAULT;
+            stage.classList.remove('no-face');
         }
     }
 
@@ -592,6 +632,7 @@
 
     async function openCam() {
         setMsg('');
+        hideAlert();
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             setMsg('Kamera tidak tersedia. Buka halaman ini lewat localhost atau HTTPS.', true);
             return;
@@ -615,7 +656,26 @@
         setMsg('Posisikan wajah di dalam bingkai, lalu tekan "Mulai ambil 30 foto".');
     }
 
-    // Ambil TOTAL frame berurutan dengan jeda JEDA ms, lalu isikan ke <input type="file" multiple>
+    // Tanya server (Laravel -> Python /recognize): wajah terdeteksi? sudah terdaftar sebagai siapa?
+    async function cekFrame(blob) {
+        const fd = new FormData();
+        fd.append('photo', blob, 'frame.jpg');
+
+        const res = await fetch(CEK_URL, {
+            method: 'POST',
+            headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' },
+            body: fd,
+        });
+
+        if (!res.ok) {
+            let pesan = 'Pemeriksaan wajah gagal (kode ' + res.status + ').';
+            try { const j = await res.json(); pesan = j.error || j.message || pesan; } catch (_) {}
+            throw new Error(pesan);
+        }
+        return res.json();
+    }
+
+    // Kumpulkan TOTAL foto yang wajahnya terdeteksi, lalu isikan ke <input type="file" multiple>
     async function snap() {
         if (capturing) return;
         if (!video.videoWidth) {
@@ -625,27 +685,79 @@
 
         cancelled = false;
         setMsg('');
+        hideAlert();
         setCapturing(true);
+        countBadge.textContent = '0/' + TOTAL;
 
         const w = LEBAR;
         const h = Math.round(video.videoHeight * LEBAR / video.videoWidth);
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext('2d');
-        const files = [];
 
-        for (let i = 0; i < TOTAL; i++) {
+        const files = [];
+        const dup = {};              // member_id -> { name, n }
+        const mulai = Date.now();
+        guideText.textContent = petunjuk(0);
+
+        while (files.length < TOTAL) {
             if (cancelled) break;
 
-            guideText.textContent = petunjuk(i);
-            countBadge.textContent = (i + 1) + '/' + TOTAL;
-            progressBar.style.width = Math.round((i / TOTAL) * 100) + '%';
+            if (Date.now() - mulai > MAX_DETIK * 1000) {
+                setCapturing(false);
+                reset();
+                setMsg('Wajah terlalu sering tidak terdeteksi (terkumpul ' + files.length + ' dari ' + TOTAL +
+                       ' foto). Perbaiki pencahayaan, hadap lurus ke kamera, lalu coba lagi.', true);
+                return;
+            }
 
             ctx.drawImage(video, 0, 0, w, h);
             const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', KUALITAS));
-            if (blob) {
-                files.push(new File([blob], 'frame_' + String(i + 1).padStart(2, '0') + '.jpg', { type: 'image/jpeg' }));
+            if (!blob) { await tunggu(JEDA_TANPA_WAJAH); continue; }
+
+            let hasil;
+            try {
+                hasil = await cekFrame(blob);
+            } catch (e) {
+                setCapturing(false);
+                reset();
+                setMsg(e.message, true);
+                showAlert('<b>Pemeriksaan wajah gagal.</b> ' + esc(e.message));
+                return;
             }
+            if (cancelled) break;
+
+            // 1) Wajah tidak terdeteksi: jangan simpan frame, tampilkan peringatan, coba lagi
+            if (!hasil.face) {
+                stage.classList.add('no-face');
+                guideText.textContent = 'Wajah tidak terdeteksi. Hadap kamera & cari tempat yang lebih terang';
+                await tunggu(JEDA_TANPA_WAJAH);
+                continue;
+            }
+            stage.classList.remove('no-face');
+
+            // 2) Wajah sudah terdaftar sebagai member lain: hentikan bila terbukti beberapa kali
+            if (hasil.duplicate) {
+                const d = dup[hasil.member_id] || (dup[hasil.member_id] = { name: hasil.name, n: 0 });
+                d.n++;
+                if (d.n >= DUP_HITS) {
+                    setCapturing(false);
+                    reset();
+                    showAlert('<b>Wajah sudah terdaftar</b> sebagai <b>' + esc(d.name) + '</b>. ' +
+                              'Satu orang hanya boleh punya satu akun member, pendaftaran wajah dihentikan.');
+                    setMsg('Wajah sudah terdaftar sebagai ' + d.name + '.', true);
+                    return;
+                }
+                // frame yang dicurigai duplikat tidak dipakai
+                await tunggu(JEDA_TANPA_WAJAH);
+                continue;
+            }
+
+            // 3) Frame valid: simpan, angka & progress bertambah HANYA di sini
+            files.push(new File([blob], 'frame_' + String(files.length + 1).padStart(2, '0') + '.jpg', { type: 'image/jpeg' }));
+            countBadge.textContent = files.length + '/' + TOTAL;
+            progressBar.style.width = Math.round((files.length / TOTAL) * 100) + '%';
+            guideText.textContent = files.length < TOTAL ? petunjuk(files.length) : 'Selesai';
 
             await tunggu(JEDA);
         }
@@ -666,7 +778,7 @@
             shot.classList.add('is-mirror');
             shot.src = e.target.result;
             setState('filled');
-            setMsg(files.length + ' foto dari kamera siap dikirim. Wajah akan diperiksa saat data disimpan.');
+            setMsg(files.length + ' foto dengan wajah terdeteksi siap dikirim.');
         };
         reader.readAsDataURL(tengah);
     }
@@ -683,7 +795,7 @@
 
     btnOpen.addEventListener('click', openCam);
     btnSnap.addEventListener('click', snap);
-    btnCancel.addEventListener('click', reset);
+    btnCancel.addEventListener('click', () => { reset(); hideAlert(); });
     btnRetake.addEventListener('click', () => { reset(); openCam(); });
 
     window.addEventListener('beforeunload', stopCam);
@@ -699,10 +811,10 @@
         // Buang baris plat tambahan yang kosong supaya tidak terkirim sebagai data kosong
         const rows = plateList.querySelectorAll('.pd-plate');
         rows.forEach((row, i) => {
-            if (i > 0 && !row.querySelector('input').value.trim()) row.remove();
+            if (i > 0 && !row.querySelector('input[name="plates[]"]').value.trim()) row.remove();
         });
 
-        const firstPlate = plateList.querySelector('input');
+        const firstPlate = plateList.querySelector('input[name="plates[]"]');
         if (!document.getElementById('name').value.trim()) {
             e.preventDefault(); document.getElementById('name').focus(); return;
         }
