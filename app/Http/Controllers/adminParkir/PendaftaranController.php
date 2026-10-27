@@ -271,9 +271,9 @@ class PendaftaranController extends Controller
 
     /**
      * Kirim satu frame ke Python /recognize.
-     *  - 422 dari Python  -> wajah tidak terdeteksi
-     *  - 503 dari Python  -> wajah terdeteksi, tapi model belum pernah dilatih (belum ada member)
-     *  - 200              -> wajah terdeteksi; "matched" true bila cocok dengan member yang ada
+     *  - 200 dengan face_detected=false -> wajah tidak ada di frame
+     *  - 200 dengan face_detected=true  -> wajah terdeteksi; matched=true bila cocok member yang ada
+     *  - 503                            -> model belum dilatih (belum ada member terdaftar)
      *
      * @return array{face: bool, member_id: ?int}
      *
@@ -286,11 +286,8 @@ class PendaftaranController extends Controller
             ->attach('photo', $isiFoto, 'frame.jpg')
             ->post(config('services.cv.url', 'http://127.0.0.1:5000').'/recognize');
 
-        if ($response->status() === 422) {
-            return ['face' => false, 'member_id' => null];
-        }
-
         if ($response->status() === 503) {
+            // Model belum ada (pertama kali, belum ada member terdaftar) → wajah "ok" tapi tidak cocok siapa pun
             return ['face' => true, 'member_id' => null];
         }
 
@@ -302,9 +299,18 @@ class PendaftaranController extends Controller
 
         $json = $response->json();
 
+        // face_detected=false → wajah tidak ada di frame (orang belum menghadap kamera)
+        if (! ($json['face_detected'] ?? false)) {
+            return ['face' => false, 'member_id' => null];
+        }
+
+        // Wajah ada → cek apakah sudah terdaftar (matched) sebagai member lain
+        $matched  = $json['matched']   ?? false;
+        $memberId = $json['member_id'] ?? null;
+
         return [
-            'face' => true,
-            'member_id' => ($json['matched'] ?? false) ? (int) $json['member_id'] : null,
+            'face'      => true,
+            'member_id' => $matched && $memberId ? (int) $memberId : null,
         ];
     }
 
