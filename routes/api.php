@@ -8,7 +8,8 @@ use App\Http\Controllers\Api\PasswordController;
 use App\Http\Controllers\AccessController;
 use App\Http\Controllers\Api\RiwayatController;
 use App\Http\Controllers\Api\NotifikasiController;
-   use App\Http\Controllers\Api\ProfilController;
+use App\Http\Controllers\Api\ProfilController;
+use App\Http\Controllers\Api\VerifikasiAksesController;
 use App\Http\Middleware\EnsureMemberCanAccess;
 
 // ===== Gerbang parkir (IoT) - punyamu, tidak diubah =====
@@ -19,6 +20,9 @@ Route::get('/parking/verification-status',[ParkingGateController::class,'verific
 Route::post('/parking/detect-access',[AccessController::class,'detect']);
 Route::post('/parking/face-result',[ParkingGateController::class,'faceResult']);
 Route::post('/parking/plate-result',[ParkingGateController::class,'plateResult']);
+
+// ===== Verifikasi akses (untuk Python test_akses_parkir.py) =====
+Route::post('/verifikasi-akses', [VerifikasiAksesController::class, 'verifikasi']);
 
 // ===== Aplikasi mobile member =====
 // Maksimal 6 percobaan login per menit per IP, mencegah tebak sandi.
