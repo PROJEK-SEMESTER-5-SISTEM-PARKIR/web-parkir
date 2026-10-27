@@ -3,176 +3,364 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AccessRequest;
 use App\Models\Member;
+use App\Models\ParkingGateState;
+use App\Models\ParkingSession;
 use App\Models\Vehicle;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 
 /**
- * Endpoint khusus untuk script Python test_akses_parkir.py.
+ * Controller untuk verifikasi akses parkir terpadu (Kamera AI + ESP32 IoT).
  *
- * POST /api/verifikasi-akses
+ * Endpoint:
+ *   POST /api/verifikasi-akses
+ *
+ * Payload:
  *   {
- *     "member_id": 3,          // hasil LBPH (opsional, null bila wajah belum dikenali)
- *     "plate_text": "BD2541WH" // hasil OCR  (opsional, null bila plat belum terbaca)
+ *     "gate": "gate_utama",        // ID gate
+ *     "member_id": 3,              // ID member hasil pengenalan wajah LBPH (null jika asing)
+ *     "plate_text": "BD2541WH",    // Nomor plat hasil OCR (null jika tidak terbaca)
+ *     "distance": 42.5,            // Jarak LBPH (semakin kecil semakin mirip)
+ *     "update_gate": true          // Apakah langsung mengupdate status gate ESP32 (default: true)
  *   }
  *
  * Response:
  *   {
- *     "status":        "izin" | "tolak" | "mismatch" | "menunggu",
- *     "keterangan":    "...",
- *     "member":        { id, name } | null,
- *     "plat_pemilik":  { plate_number, vehicle_type, member_id } | null,
- *     "cocok":         true | false   // wajah & plat milik orang yang sama
+ *     "success": true,
+ *     "status": "izin" | "tolak" | "mismatch" | "menunggu",
+ *     "cocok": true | false,
+ *     "izin_gate": "BUKA" | "TOLAK" | "MENUNGGU",
+ *     "keterangan": "...",
+ *     "member": { id, name } | null,
+ *     "vehicle": { id, plate_number } | null
  *   }
  */
 class VerifikasiAksesController extends Controller
 {
     public function verifikasi(Request $request): JsonResponse
     {
-        $memberId  = $request->input('member_id');   // int|null
-        $plateTeks = $request->input('plate_text');  // string|null
+        $gate       = $request->input('gate', 'gate_utama');
+        $memberId   = $request->filled('member_id') ? (int) $request->input('member_id') : null;
+        $plateTeks  = $request->filled('plate_text') ? (string) $request->input('plate_text') : null;
+        $distance   = $request->filled('distance') ? (float) $request->input('distance') : null;
+        $updateGate = $request->boolean('update_gate', true);
 
-        $memberId  = $memberId  ? (int)  $memberId  : null;
-        $plateTeks = $plateTeks ? $this->normalizePlate((string) $plateTeks) : null;
-
-        // Bakal kita isi
-        $member      = null;
-        $platePemilik = null;
-
-        // ── Cari member dari wajah ─────────────────────────────────────────
-        if ($memberId !== null) {
-            $member = Member::where('id', $memberId)
-                ->where('is_active', true)
-                ->first(['id', 'name']);
-        }
-
-        // ── Cari pemilik plat ──────────────────────────────────────────────
-        if ($plateTeks !== null) {
-            $kendaraan = Vehicle::with('member:id,name,is_active')
-                ->whereRaw(
-                    "REPLACE(UPPER(plate_number),' ','') = ?",
-                    [$plateTeks]
-                )
-                ->first();
-
-            if ($kendaraan) {
-                $platePemilik = [
-                    'plate_number'  => $kendaraan->plate_number,
-                    'vehicle_type'  => $kendaraan->vehicle_type,
-                    'member_id'     => $kendaraan->member_id,
-                    'member_name'   => $kendaraan->member?->name,
-                    'member_active' => (bool) ($kendaraan->member?->is_active),
-                ];
-            }
-        }
-
-        // ── Tentukan status ────────────────────────────────────────────────
-        [$status, $keterangan, $cocok] = $this->tentukan(
-            $memberId, $member, $plateTeks, $platePemilik
+        // Ambil atau buat state gate
+        $gateState = ParkingGateState::firstOrCreate(
+            ['gate' => $gate],
+            ['trigger' => false, 'izin' => 'SIAGA', 'status' => 'SIAGA']
         );
 
+        // 1. Cari Member dari wajah
+        $member = null;
+        if ($memberId !== null) {
+            $member = Member::find($memberId);
+        }
+
+        // 2. Cari Kendaraan dari plat nomor (exact & fuzzy matching)
+        $vehicle = null;
+        $matchedPlate = null;
+        if ($plateTeks !== null) {
+            [$vehicle, $matchedPlate] = $this->findVehicle($plateTeks);
+        }
+
+        // 3. Evaluasi kecocokan dan hak akses
+        [$status, $keterangan, $cocok] = $this->evaluasiAkses(
+            $memberId,
+            $member,
+            $plateTeks,
+            $vehicle,
+            $matchedPlate
+        );
+
+        // 4. Update database ParkingGateState, AccessRequest, dan ParkingSession jika updateGate = true
+        $izinGate = 'MENUNGGU';
+        if ($updateGate && in_array($status, ['izin', 'tolak', 'mismatch'])) {
+            $izinGate = ($status === 'izin') ? 'BUKA' : 'TOLAK';
+
+            $this->prosesDatabaseGate(
+                $gateState,
+                $izinGate,
+                $status,
+                $keterangan,
+                $member,
+                $vehicle,
+                $plateTeks ?? $matchedPlate,
+                $distance
+            );
+        }
+
         return response()->json([
-            'status'       => $status,
-            'keterangan'   => $keterangan,
-            'cocok'        => $cocok,
-            'member'       => $member ? ['id' => $member->id, 'name' => $member->name] : null,
-            'plat_pemilik' => $platePemilik,
+            'success'    => true,
+            'status'     => $status,
+            'cocok'      => $cocok,
+            'izin_gate'  => $izinGate,
+            'keterangan' => $keterangan,
+            'member'     => $member ? ['id' => $member->id, 'name' => $member->name] : null,
+            'vehicle'    => $vehicle ? ['id' => $vehicle->id, 'plate_number' => $vehicle->plate_number] : null,
+            'gate_state' => $gateState->fresh(),
         ]);
     }
 
-    // ── Logika pencocokan ────────────────────────────────────────────────────
-
-    private function tentukan(
-        ?int    $memberId,
+    // ──────────────────────────────────────────────────────────────────────────
+    // Evaluasi Logika Akses
+    // ──────────────────────────────────────────────────────────────────────────
+    private function evaluasiAkses(
+        ?int $memberId,
         ?Member $member,
         ?string $plateTeks,
-        ?array  $platePemilik
+        ?Vehicle $vehicle,
+        ?string $matchedPlate
     ): array {
-        $wajahOk = $memberId !== null;
-        $platOk  = $plateTeks !== null;
+        $wajahTerdeteksi = $memberId !== null;
+        $platTerbaca     = $plateTeks !== null;
 
-        // Tidak ada data sama sekali
-        if (! $wajahOk && ! $platOk) {
+        // Kondisi belum lengkap sama sekali
+        if (!$wajahTerdeteksi && !$platTerbaca) {
             return ['menunggu', 'Arahkan wajah dan plat kendaraan ke kamera', false];
         }
 
-        // ── Keduanya ada ──────────────────────────────────────────────────
-        if ($wajahOk && $platOk) {
-            // Wajah dikenali tapi member tidak aktif / tidak ditemukan
-            if ($member === null) {
-                return ['tolak', 'Wajah tidak dikenal atau member tidak aktif', false];
-            }
-
-            // Plat tidak terdaftar
-            if ($platePemilik === null) {
-                return [
-                    'tolak',
-                    "Plat {$plateTeks} tidak terdaftar di sistem",
-                    false,
-                ];
-            }
-
-            // Member tidak aktif
-            if (! $platePemilik['member_active']) {
-                return ['tolak', 'Pemilik kendaraan tidak aktif', false];
-            }
-
-            // Wajah dan plat milik member yang SAMA → IZIN ✅
-            if ((int) $platePemilik['member_id'] === $memberId) {
-                return [
-                    'izin',
-                    "Akses diterima: {$member->name} | Plat {$plateTeks}",
-                    true,
-                ];
-            }
-
-            // Wajah milik A, plat milik B → mismatch ⚠
-            return [
-                'mismatch',
-                "Wajah: {$member->name} | Plat {$plateTeks} milik {$platePemilik['member_name']}",
-                false,
-            ];
-        }
-
-        // ── Hanya wajah (plat belum terbaca) ─────────────────────────────
-        if ($wajahOk) {
-            if ($member === null) {
-                return ['tolak', 'Wajah tidak dikenal atau member tidak aktif', false];
-            }
-
-            // Ambil daftar plat milik member ini
-            $daftarPlat = Vehicle::where('member_id', $memberId)
-                ->pluck('plate_number')
-                ->map(fn($p) => $this->normalizePlate($p))
-                ->implode(', ');
-
-            return [
-                'menunggu',
-                "Wajah: {$member->name} | Menunggu plat... (terdaftar: {$daftarPlat})",
-                false,
-            ];
-        }
-
-        // ── Hanya plat (wajah belum terdeteksi) ──────────────────────────
-        if ($platePemilik === null) {
+        // ── KASUS 1: Wajah TIDAK dikenali (Asing) ──────────────────────────
+        if (!$wajahTerdeteksi || !$member) {
             return [
                 'tolak',
-                "Plat {$plateTeks} tidak terdaftar di sistem",
+                'Wajah tidak dikenal atau belum terdaftar sebagai member',
                 false,
             ];
         }
 
-        if (! $platePemilik['member_active']) {
-            return ['tolak', "Pemilik plat {$plateTeks} tidak aktif", false];
+        // ── KASUS 2: Member TIDAK AKTIF ────────────────────────────────────
+        if (!$member->is_active) {
+            return [
+                'tolak',
+                "Member {$member->name} saat ini berstatus tidak aktif",
+                false,
+            ];
         }
 
+        // ── KASUS 3: Plat TIDAK TERBACA ────────────────────────────────────
+        if (!$platTerbaca) {
+            return [
+                'menunggu',
+                "Wajah {$member->name} terkonfirmasi. Menunggu pembacaan plat nomor...",
+                false,
+            ];
+        }
+
+        // ── KASUS 4: Plat TIDAK TERDAFTAR ──────────────────────────────────
+        if (!$vehicle) {
+            return [
+                'tolak',
+                "Plat kendaraan {$plateTeks} tidak terdaftar di sistem",
+                false,
+            ];
+        }
+
+        // ── KASUS 5: MISMATCH (Wajah milik A, plat milik B) ─────────────────
+        if ((int) $vehicle->member_id !== (int) $member->id) {
+            $pemilikPlat = $vehicle->member?->name ?? 'Member Lain';
+            return [
+                'mismatch',
+                "Wajah {$member->name} tidak cocok dengan pemilik plat {$plateTeks} (milik {$pemilikPlat})",
+                false,
+            ];
+        }
+
+        // ── KASUS 6: Cek Langganan Parkir Aktif (Subscription) ─────────────
+        $subscription = $this->getActiveSubscription($member);
+        if (!$subscription) {
+            return [
+                'tolak',
+                "Langganan parkir untuk {$member->name} tidak aktif atau sudah habis masa berlakunya",
+                false,
+            ];
+        }
+
+        // ── KASUS 7: SEMUA COCOK -> AKSES DITERIMA (IZIN) ──────────────────
         return [
-            'menunggu',
-            "Plat {$plateTeks} milik {$platePemilik['member_name']} | Menunggu verifikasi wajah...",
-            false,
+            'izin',
+            "Akses Diterima: {$member->name} | Kendaraan: {$vehicle->plate_number}",
+            true,
         ];
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Update State Gate, Sesi Parkir, dan Catatan Riwayat Akses
+    // ──────────────────────────────────────────────────────────────────────────
+    private function prosesDatabaseGate(
+        ParkingGateState $state,
+        string $izinGate,
+        string $status,
+        string $keterangan,
+        ?Member $member,
+        ?Vehicle $vehicle,
+        ?string $plateDetected,
+        ?float $distance
+    ): void {
+        $isApproved = ($izinGate === 'BUKA');
+
+        if ($isApproved && $member && $vehicle) {
+            // Cek apakah kendaraan sedang berada di dalam (sesi aktif)
+            $activeSession = ParkingSession::where('vehicle_id', $vehicle->id)
+                ->where('status', 'active')
+                ->latest('entry_time')
+                ->first();
+
+            // Tentukan arah berdasarkan ID gerbang atau keberadaan sesi aktif
+            $isExit = ($state->gate === 'gate_keluar') || ($activeSession !== null && $state->gate !== 'gate_masuk');
+            $direction = $isExit ? 'out' : 'in';
+
+            // Buat catatan AccessRequest (auto_approved)
+            $accessRequest = AccessRequest::create([
+                'member_id'      => $member->id,
+                'vehicle_id'     => $vehicle->id,
+                'gate'           => $state->gate,
+                'direction'      => $direction,
+                'plate_detected' => $plateDetected ?? $vehicle->plate_number,
+                'plate_match'    => true,
+                'face_match'     => true,
+                'face_distance'  => $distance,
+                'status'         => 'auto_approved',
+                'requested_at'   => now(),
+                'responded_at'   => now(),
+            ]);
+
+            if ($isExit) {
+                // Kendaraan Keluar
+                if ($activeSession) {
+                    $activeSession->update([
+                        'exit_access_request_id' => $accessRequest->id,
+                        'exit_time'              => now(),
+                        'status'                 => 'completed',
+                    ]);
+                }
+                $gateStatus = 'PALANG TERBUKA - KENDARAAN KELUAR';
+            } else {
+                // Kendaraan Masuk
+                ParkingSession::create([
+                    'member_id'               => $member->id,
+                    'vehicle_id'              => $vehicle->id,
+                    'entry_access_request_id' => $accessRequest->id,
+                    'entry_time'              => now(),
+                    'status'                  => 'active',
+                ]);
+                $gateStatus = 'PALANG TERBUKA - KENDARAAN MASUK';
+            }
+
+            // Update state gerbang untuk dibaca ESP32
+            $state->update([
+                'trigger'          => false,
+                'izin'             => 'BUKA',
+                'status'           => $gateStatus,
+                'face_match'       => true,
+                'face_member_id'   => $member->id,
+                'face_distance'    => $distance,
+                'plate_match'      => true,
+                'plate_member_id'  => $member->id,
+                'plate_vehicle_id' => $vehicle->id,
+                'plate_detected'   => $plateDetected ?? $vehicle->plate_number,
+            ]);
+        } else {
+            // Akses Ditolak -> Buat catatan AccessRequest (denied)
+            AccessRequest::create([
+                'member_id'      => $member?->id,
+                'vehicle_id'     => $vehicle?->id,
+                'gate'           => $state->gate,
+                'direction'      => 'in',
+                'plate_detected' => $plateDetected ?? 'UNKNOWN',
+                'plate_match'    => $vehicle !== null,
+                'face_match'     => $member !== null,
+                'face_distance'  => $distance,
+                'status'         => 'denied',
+                'reason'         => $keterangan,
+                'requested_at'   => now(),
+                'responded_at'   => now(),
+            ]);
+
+            // Update state gerbang untuk dibaca ESP32 (TOLAK)
+            $state->update([
+                'trigger'          => false,
+                'izin'             => 'TOLAK',
+                'status'           => 'AKSES DITOLAK: ' . $keterangan,
+                'face_match'       => $member !== null,
+                'face_member_id'   => $member?->id,
+                'face_distance'    => $distance,
+                'plate_match'      => $vehicle !== null,
+                'plate_member_id'  => $vehicle?->member_id,
+                'plate_vehicle_id' => $vehicle?->id,
+                'plate_detected'   => $plateDetected,
+            ]);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Helper Pencarian Kendaraan (Exact & Fuzzy Levenshtein)
+    // ──────────────────────────────────────────────────────────────────────────
+    private function findVehicle(string $rawPlate): array
+    {
+        $cleanPlate = $this->normalizePlate($rawPlate);
+        if ($cleanPlate === '') {
+            return [null, null];
+        }
+
+        // 1. Coba pencarian persis (exact match)
+        $vehicle = Vehicle::with('member')
+            ->whereRaw("REPLACE(UPPER(plate_number), ' ', '') = ?", [$cleanPlate])
+            ->first();
+
+        if ($vehicle) {
+            return [$vehicle, $cleanPlate];
+        }
+
+        // 2. Coba pencarian kemiripan (fuzzy similarity untuk toleransi OCR)
+        $vehicles = Vehicle::with('member')->get();
+        $bestVehicle = null;
+        $bestScore = 0.0;
+
+        foreach ($vehicles as $v) {
+            $regPlate = $this->normalizePlate($v->plate_number);
+            $score    = $this->plateSimilarity($cleanPlate, $regPlate);
+
+            if ($score > $bestScore) {
+                $bestScore   = $score;
+                $bestVehicle = $v;
+            }
+        }
+
+        if ($bestVehicle && $bestScore >= 0.60) {
+            return [$bestVehicle, $this->normalizePlate($bestVehicle->plate_number)];
+        }
+
+        return [null, $cleanPlate];
+    }
+
+    private function plateSimilarity(string $ocr, string $registered): float
+    {
+        if ($ocr === $registered) return 1.0;
+        if ($ocr === '' || $registered === '') return 0.0;
+
+        similar_text($ocr, $registered, $percent);
+        $similarScore = $percent / 100;
+
+        $distance  = levenshtein($ocr, $registered);
+        $maxLength = max(strlen($ocr), strlen($registered));
+        $levScore  = $maxLength > 0 ? max(0, 1 - ($distance / $maxLength)) : 0.0;
+
+        return ($similarScore * 0.5) + ($levScore * 0.5);
+    }
+
+    private function getActiveSubscription(?Member $member)
+    {
+        if (!$member) return null;
+
+        return $member->subscriptions()
+            ->where('status', 'active')
+            ->whereDate('start_date', '<=', now()->toDateString())
+            ->whereDate('end_date', '>=', now()->toDateString())
+            ->latest('end_date')
+            ->first();
     }
 
     private function normalizePlate(?string $plate): string

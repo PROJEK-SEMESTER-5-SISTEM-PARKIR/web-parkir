@@ -342,16 +342,38 @@ class ParkingGateController extends Controller
 
     public function verificationStatus(Request $request)
     {
-        $gate = $request->input('gate', 'gate_utama');
+        // 1. Jika gate spesifik diminta, cek gate tersebut
+        if ($request->filled('gate')) {
+            $gate = $request->input('gate');
+            $state = ParkingGateState::firstOrCreate(
+                ['gate' => $gate],
+                ['trigger' => false, 'izin' => 'SIAGA', 'status' => 'SIAGA']
+            );
+            return response()->json([
+                'success' => true,
+                'data' => $state,
+            ]);
+        }
 
-        $state = ParkingGateState::firstOrCreate(
-            ['gate' => $gate],
-            [
-                'trigger' => false,
-                'izin' => 'SIAGA',
-                'status' => 'SIAGA',
-            ]
-        );
+        // 2. Jika tidak ada gate spesifik, prioritaskan gate yang sedang menunggu verifikasi (trigger == true / izin == MENUNGGU)
+        $waitingState = ParkingGateState::where('trigger', true)
+            ->orWhere('izin', 'MENUNGGU')
+            ->latest('updated_at')
+            ->first();
+
+        if ($waitingState) {
+            return response()->json([
+                'success' => true,
+                'data' => $waitingState,
+            ]);
+        }
+
+        // 3. Fallback: ambil gate yang paling terakhir diupdate atau gate_utama
+        $state = ParkingGateState::latest('updated_at')->first()
+            ?? ParkingGateState::firstOrCreate(
+                ['gate' => 'gate_utama'],
+                ['trigger' => false, 'izin' => 'SIAGA', 'status' => 'SIAGA']
+            );
 
         return response()->json([
             'success' => true,
@@ -362,96 +384,106 @@ class ParkingGateController extends Controller
     public function faceResult(Request $request)
     {
         $request->validate([
-            'gate' => 'required|string',
-            'embedding' => 'required|array',
+            'gate'      => 'required|string',
+            'embedding' => 'nullable|array',     // embedding FastAPI (opsional)
+            'member_id' => 'nullable|integer',   // member_id LBPH (opsional)
         ]);
 
         $gate = $request->input('gate');
-        $inputEmbedding = $request->input('embedding');
-
-        if (count($inputEmbedding) !== 128) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Embedding wajah harus 128 dimensi.',
-            ], 422);
-        }
 
         $state = ParkingGateState::firstOrCreate(
             ['gate' => $gate],
-            [
-                'trigger' => false,
-                'izin' => 'SIAGA',
-                'status' => 'SIAGA',
-            ]
+            ['trigger' => false, 'izin' => 'SIAGA', 'status' => 'SIAGA']
         );
 
         if ($state->izin !== 'MENUNGGU') {
             return response()->json([
                 'success' => false,
                 'message' => 'Gate tidak sedang menunggu verifikasi.',
-                'izin' => $state->izin,
+                'izin'    => $state->izin,
             ], 409);
         }
 
-        $profiles = FaceProfile::with('member')->get();
-        $bestMember = null;
+        // ── Mode 1: LBPH member_id langsung dari Python ───────────────────
+        if ($request->filled('member_id') && !$request->filled('embedding')) {
+            $memberId = (int) $request->input('member_id');
+            $member   = Member::find($memberId);
+
+            $faceMatch = $member && $member->is_active;
+
+            $state->update($faceMatch
+                ? ['face_match' => true,  'face_member_id' => $member->id,
+                   'status' => 'WAJAH COCOK - MENUNGGU PLAT']
+                : ['face_match' => false, 'face_member_id' => null,
+                   'status' => 'WAJAH TIDAK COCOK - MENUNGGU PLAT']
+            );
+
+            $this->evaluateGate($state->fresh());
+
+            return response()->json([
+                'success'     => true,
+                'face_match'  => $faceMatch,
+                'member_id'   => $member?->id,
+                'member_name' => $member?->name,
+                'message'     => $faceMatch
+                    ? 'Wajah cocok (LBPH). Menunggu hasil plat.'
+                    : 'Wajah tidak cocok (LBPH). Menunggu hasil plat.',
+            ]);
+        }
+
+        // ── Mode 2: Embedding 128-d dari FastAPI (lama, tetap didukung) ───
+        $inputEmbedding = $request->input('embedding', []);
+
+        if (count($inputEmbedding) !== 128) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kirim member_id (LBPH) ATAU embedding 128 dimensi (FastAPI).',
+            ], 422);
+        }
+
+        $profiles     = FaceProfile::with('member')->get();
+        $bestMember   = null;
         $bestDistance = null;
-        $bestProfile = null;
+        $bestProfile  = null;
 
         foreach ($profiles as $profile) {
-            if (
-                !$profile->embedding ||
-                !is_array($profile->embedding) ||
-                count($profile->embedding) !== 128
-            ) {
+            if (!$profile->embedding || !is_array($profile->embedding) ||
+                count($profile->embedding) !== 128) {
                 continue;
             }
-
             $sum = 0.0;
-
             for ($i = 0; $i < 128; $i++) {
                 $diff = (float)$inputEmbedding[$i] - (float)$profile->embedding[$i];
                 $sum += $diff * $diff;
             }
-
             $distance = sqrt($sum);
-
             if ($bestDistance === null || $distance < $bestDistance) {
                 $bestDistance = $distance;
-                $bestMember = $profile->member;
-                $bestProfile = $profile;
+                $bestMember   = $profile->member;
+                $bestProfile  = $profile;
             }
         }
 
         $threshold = 0.70;
-        $faceMatch = $bestMember &&
-            $bestDistance !== null &&
-            $bestDistance <= $threshold;
+        $faceMatch = $bestMember && $bestDistance !== null && $bestDistance <= $threshold;
 
-        if ($faceMatch) {
-            $state->update([
-                'face_match' => true,
-                'face_member_id' => $bestMember->id,
-                'status' => 'WAJAH COCOK - MENUNGGU PLAT',
-            ]);
-        } else {
-            $state->update([
-                'face_match' => false,
-                'face_member_id' => null,
-                'status' => 'WAJAH TIDAK COCOK - MENUNGGU PLAT',
-            ]);
-        }
+        $state->update($faceMatch
+            ? ['face_match' => true,  'face_member_id' => $bestMember->id,
+               'status' => 'WAJAH COCOK - MENUNGGU PLAT']
+            : ['face_match' => false, 'face_member_id' => null,
+               'status' => 'WAJAH TIDAK COCOK - MENUNGGU PLAT']
+        );
 
         $this->evaluateGate($state->fresh());
 
         return response()->json([
-            'success' => true,
-            'face_match' => (bool)$faceMatch,
-            'member_id' => $bestMember?->id,
-            'member_name' => $bestMember?->name,
+            'success'         => true,
+            'face_match'      => (bool)$faceMatch,
+            'member_id'       => $bestMember?->id,
+            'member_name'     => $bestMember?->name,
             'face_profile_id' => $bestProfile?->id,
-            'distance' => $bestDistance,
-            'message' => $faceMatch
+            'distance'        => $bestDistance,
+            'message'         => $faceMatch
                 ? 'Wajah cocok. Menunggu hasil plat.'
                 : 'Wajah tidak cocok. Menunggu hasil plat.',
         ]);

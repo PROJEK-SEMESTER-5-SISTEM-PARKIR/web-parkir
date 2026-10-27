@@ -13,6 +13,7 @@ class ParkingGateState extends Model
         'status',
         'face_match',
         'face_member_id',
+        'face_distance',
         'plate_match',
         'plate_member_id',
         'plate_vehicle_id',
