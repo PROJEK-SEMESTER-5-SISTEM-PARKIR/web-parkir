@@ -5,14 +5,18 @@ namespace App\Http\Controllers\adminParkir;
 use App\Http\Controllers\Controller;
 use App\Models\FaceProfile;
 use App\Models\Member;
+use App\Models\MemberSubscription;
+use App\Models\SubscriptionPlan;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+
 
 class PelangganController extends Controller
 {
@@ -54,7 +58,68 @@ class PelangganController extends Controller
             'nonaktif' => Member::where('is_active', false)->count(),
         ];
 
-        return view('admin_parkir.pelanggan', compact('members', 'stats', 'search', 'status'));
+        // Daftar paket untuk popup Perpanjang / Mulai paket
+        $paket = SubscriptionPlan::active()->ordered()->get();
+
+        return view('admin_parkir.pelanggan', compact('members', 'stats', 'search', 'status', 'paket'));
+    }
+
+    /**
+     * Perpanjang paket, atau mulai paket untuk pelanggan yang belum pernah berlangganan.
+     *
+     * - Masih berlaku : disambung dari tanggal berakhir (sisa hari tidak hangus).
+     * - Sudah habis   : dihitung mulai hari ini.
+     * - Belum punya   : dibuat langganan baru mulai hari ini.
+     *
+     * Baris langganan yang ada DIUBAH (bukan dibuat baru) supaya tidak ada baris lama
+     * yang terus terhitung "kedaluwarsa" di Dashboard setelah pelanggan memperpanjang.
+     */
+    public function perpanjang(Request $request, Member $member): RedirectResponse
+    {
+        if (! $member->is_active) {
+            return back()->with('error', 'Pelanggan nonaktif. Aktifkan dulu sebelum memperpanjang paket.');
+        }
+
+        $data = $request->validate([
+            'subscription_plan_id' => [
+                'required', 'integer',
+                Rule::exists('subscription_plans', 'id')->where('is_active', true),
+            ],
+        ]);
+
+        $plan = SubscriptionPlan::findOrFail($data['subscription_plan_id']);
+        $hariIni = today();
+
+        $sub = DB::transaction(function () use ($member, $plan, $hariIni) {
+            $sub = $member->subscriptions()->orderByDesc('end_date')->lockForUpdate()->first();
+
+            if ($sub && $sub->status === 'active' && $sub->end_date->gte($hariIni)) {
+                // Masih berlaku: sambung dari tanggal berakhir, sisa hari tidak hangus.
+                $sub->end_date = $sub->end_date->copy()->addDays($plan->duration_days);
+            } elseif ($sub) {
+                // Sudah habis atau tidak aktif: mulai lagi dari hari ini.
+                $sub->start_date = $hariIni;
+                $sub->end_date = $hariIni->copy()->addDays($plan->duration_days);
+            } else {
+                // Belum pernah berlangganan.
+                $sub = new MemberSubscription([
+                    'member_id'  => $member->id,
+                    'start_date' => $hariIni,
+                    'end_date'   => $hariIni->copy()->addDays($plan->duration_days),
+                ]);
+            }
+
+            $sub->subscription_plan_id = $plan->id;
+            $sub->status = 'active';
+            $sub->save();
+
+            return $sub;
+        });
+
+        return back()->with(
+            'success',
+            "Paket {$plan->name} untuk {$member->name} berlaku sampai {$sub->end_date->format('d M Y')}."
+        );
     }
 
     public function resetPassword(Member $member): RedirectResponse

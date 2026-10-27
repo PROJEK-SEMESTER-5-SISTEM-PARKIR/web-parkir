@@ -40,6 +40,22 @@
     .d-empty{text-align:center;color:var(--muted);font-size:14px;padding:30px 0}
     .d-mini{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .d-mini svg{width:18px;height:18px}
+
+    /* ---------- Slot parkir ---------- */
+    .d-slots{margin-bottom:20px}
+    .d-slots-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+    .d-slots-head a{text-decoration:none}
+    .d-slots-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+    @media (max-width:700px){.d-slots-grid{grid-template-columns:1fr;gap:18px}}
+    .d-slot-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+    .d-slot-name{font-size:14px;font-weight:600}
+    .d-slot-count{font-size:13px;color:var(--muted)}
+    .d-slot-count b{font-size:22px;color:var(--text)}
+    .d-track{height:10px;border-radius:999px;background:#eef1f5;overflow:hidden}
+    .d-track i{display:block;height:100%;border-radius:999px;background:var(--green);transition:width .3s}
+    .d-track i.warn{background:var(--amber)}
+    .d-track i.full{background:var(--red)}
+    .d-slot-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)}
 </style>
 
 {{-- ===== Status AI + aksi cepat ===== --}}
@@ -54,8 +70,21 @@
     </div>
 </div>
 
-{{-- ===== 4 kartu ringkasan ===== --}}
+{{-- ===== Kartu ringkasan ===== --}}
 <div class="d-stats">
+    <div class="d-stat">
+        <div class="d-ico" style="background:#ede9fe;color:#6d4fd6">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 010 6.8M18.5 14.8c1.8.7 2.8 2.4 3.2 5.2"/></svg>
+        </div>
+        <div>
+            <div class="d-num">{{ $stats['member_terdaftar'] ?? '-' }}</div>
+            <div class="d-lbl">
+                Member terdaftar
+                @isset($stats['member_berlangganan']) &middot; {{ $stats['member_berlangganan'] }} aktif @endisset
+            </div>
+        </div>
+    </div>
+
     <div class="d-stat">
         <div class="d-ico" style="background:#e8f0fe;color:var(--accent)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="8" rx="2"/><circle cx="7.5" cy="17" r="1.5"/><circle cx="16.5" cy="17" r="1.5"/></svg>
@@ -88,6 +117,44 @@
     </div>
 </div>
 
+{{-- ===== Slot parkir ===== --}}
+@if (!empty($slots))
+    <div class="d-panel d-slots">
+        <div class="d-slots-head">
+            <div>
+                <h3>Slot parkir</h3>
+                <p class="d-sub" style="margin-bottom:0">Jatah kendaraan member yang sedang berlangganan</p>
+            </div>
+            <a href="{{ route('parkir.slot') }}" class="btn btn-outline">Atur kapasitas</a>
+        </div>
+
+        <div class="d-slots-grid">
+           @foreach ($slots as $jenis => $s)
+                    @php
+                        $label = ucfirst($jenis);
+                        $persen = $s['kapasitas'] > 0
+                            ? min(100, (int) round($s['terisi'] / $s['kapasitas'] * 100))
+                            : ($s['terisi'] > 0 ? 100 : 0);
+                        $kelas = $persen >= 100 ? 'full' : ($persen >= 80 ? 'warn' : '');
+                    @endphp
+                    <div>
+                    <div class="d-slot-top">
+                        <span class="d-slot-name">{{ $label }}</span>
+                        <span class="d-slot-count"><b>{{ $s['terisi'] }}</b> / {{ $s['kapasitas'] }} terisi</span>
+                    </div>
+                    <div class="d-track" role="progressbar" aria-valuenow="{{ $persen }}" aria-valuemin="0" aria-valuemax="100">
+                        <i class="{{ $kelas }}" style="width: {{ $persen }}%"></i>
+                    </div>
+                    <div class="d-slot-meta">
+                        <span>{{ $s['sisa'] === 0 ? 'Penuh, pendaftaran ditutup' : 'Sisa '.$s['sisa'].' slot' }}</span>
+                        <span>Di dalam sekarang: {{ $s['di_dalam'] }}</span>
+                    </div>
+                </div>
+            @endforeach
+        </div>
+    </div>
+@endif
+
 {{-- ===== Aktivitas + perlu perhatian ===== --}}
 <div class="d-grid">
 
@@ -116,10 +183,29 @@
 
     {{-- Perlu perhatian --}}
     <div class="d-panel">
+        @php
+            // Slot yang sudah penuh atau tinggal sedikit (kapasitas 0 dianggap sengaja ditutup)
+            $slotPerhatian = collect($slots ?? [])->filter(fn ($s) => $s['kapasitas'] > 0 && $s['sisa'] <= 2);
+        @endphp
+
         <h3>Perlu perhatian</h3>
         <p class="d-sub">Hal yang sebaiknya dicek admin</p>
 
         <div class="d-list">
+            @foreach ($slotPerhatian as $jenis => $s)
+                <div class="d-row">
+                    <div class="d-mini {{ $s['sisa'] === 0 ? 'd-bad' : 'd-warn' }}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 16V8h3.2a2.3 2.3 0 010 4.6H9"/></svg>
+                    </div>
+                    <div class="d-main">
+                        <div class="d-name">Slot {{ $jenis }} {{ $s['sisa'] === 0 ? 'penuh' : 'hampir penuh' }}</div>
+                        <div class="d-meta">
+                            {{ $s['sisa'] === 0 ? 'Pendaftaran '.$jenis.' baru ditutup' : 'Sisa '.$s['sisa'].' dari '.$s['kapasitas'] }}
+                        </div>
+                    </div>
+                </div>
+            @endforeach
+
             @if ($expiredCount > 0)
                 <div class="d-row">
                     <div class="d-mini d-warn">
@@ -164,7 +250,7 @@
                 </div>
             @endforeach
 
-            @if ($expiredCount === 0 && $recentFailed->isEmpty() && $expiringSoon->isEmpty())
+            @if ($slotPerhatian->isEmpty() && $expiredCount === 0 && $recentFailed->isEmpty() && $expiringSoon->isEmpty())
                 <div class="d-empty">Semua aman, tidak ada yang perlu dicek.</div>
             @endif
         </div>

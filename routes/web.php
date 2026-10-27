@@ -74,6 +74,7 @@ Route::middleware(['auth', 'role:admin_parkir'])
         Route::put('/paket/{plan}', [PaketController::class, 'update'])->name('paket.update');
         Route::patch('/paket/{plan}/status', [PaketController::class, 'toggle'])->name('paket.toggle');
         Route::delete('/paket/{plan}', [PaketController::class, 'destroy'])->name('paket.destroy');
+         Route::post('/pelanggan/{member}/perpanjang', [PelangganController::class, 'perpanjang'])->name('pelanggan.perpanjang');
 
         // Akses gerbang / deteksi plat
         Route::get('/test-access', function () {

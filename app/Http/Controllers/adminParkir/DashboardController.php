@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\AccessRequest;
 use App\Models\MemberSubscription;
 use App\Models\ParkingSession;
+use App\Models\Member;
+use App\Services\SlotService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\View\View;
@@ -16,13 +18,23 @@ class DashboardController extends Controller
     {
         $today = today();
 
-        // 4 kartu ringkasan
+        // Kartu ringkasan
         $stats = [
+            'member_terdaftar'    => Member::count(),
+            // Member aktif yang langganannya belum berakhir
+            'member_berlangganan' => Member::where('is_active', true)
+                ->whereHas('subscriptions', fn ($q) => $q
+                    ->where('status', 'active')
+                    ->whereDate('end_date', '>=', $today))
+                ->count(),
             'sedang_parkir'   => ParkingSession::active()->count(),
             'masuk_hari_ini'  => ParkingSession::whereDate('entry_time', $today)->count(),
             'keluar_hari_ini' => ParkingSession::whereDate('exit_time', $today)->count(),
             'gagal_hari_ini'  => $this->failedRequests()->whereDate('requested_at', $today)->count(),
         ];
+
+        // Slot parkir per jenis kendaraan (terisi, sisa, kapasitas)
+        $slots = app(SlotService::class)->ringkasan();
 
         // Daftar aktivitas verifikasi terbaru
         $recentRequests = AccessRequest::with('member')
@@ -57,7 +69,7 @@ class DashboardController extends Controller
         });
 
         return view('admin_parkir.dashboard', compact(
-            'stats', 'recentRequests', 'recentFailed', 'expiringSoon', 'expiredCount', 'aiOnline'
+            'stats', 'slots', 'recentRequests', 'recentFailed', 'expiringSoon', 'expiredCount', 'aiOnline'
         ));
     }
 

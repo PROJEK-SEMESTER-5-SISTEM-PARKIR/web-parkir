@@ -6,6 +6,16 @@
 
 @section('content')
 
+    <style>
+        .btn-sm{padding:5px 12px;font-size:12.5px;white-space:nowrap}
+        .dlg{border:0;border-radius:16px;padding:22px;width:min(440px,92vw);box-shadow:0 20px 50px rgba(11,31,51,.3)}
+        .dlg::backdrop{background:rgba(11,31,51,.55)}
+        .dlg h3{margin:0 0 4px;font-size:18px}
+        .dlg .sub{margin:0 0 16px;color:var(--muted);font-size:14px}
+        .ringkas{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.7}
+        .ringkas .catatan{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+    </style>
+
     {{-- HASIL RESET KATA SANDI (tampil sekali setelah admin menekan tombol reset) --}}
     @if (session('reset'))
         @php $r = session('reset'); @endphp
@@ -162,6 +172,26 @@
                             {{-- Aksi --}}
                             <td>
                                 <div class="actions">
+                                    {{-- Perpanjang / mulai paket: hanya untuk pelanggan aktif, boleh kapan saja --}}
+                                    @if ($member->is_active)
+                                        @php
+                                            $masihBerlaku = $sub && $sub->status === 'active' && $sub->end_date->gte(now()->startOfDay());
+                                            // menonjol (biru) kalau belum punya paket, sudah habis, atau tinggal <= 7 hari
+                                            $mendesak = ! $sub || $sub->end_date->lte(now()->startOfDay()->addDays(7));
+                                        @endphp
+                                        <button type="button"
+                                                class="btn btn-sm {{ $mendesak ? 'btn-primary' : 'btn-outline' }}"
+                                                data-perpanjang
+                                                data-url="{{ route('parkir.pelanggan.perpanjang', $member) }}"
+                                                data-nama="{{ $member->name }}"
+                                                data-paket="{{ $sub?->plan?->name }}"
+                                                data-planid="{{ $sub?->subscription_plan_id }}"
+                                                data-berakhir="{{ $sub?->end_date?->format('Y-m-d') }}"
+                                                data-aktif="{{ $masihBerlaku ? '1' : '0' }}">
+                                            {{ $sub ? 'Perpanjang' : 'Mulai paket' }}
+                                        </button>
+                                    @endif
+
                                     <form method="POST"
                                           action="{{ route('parkir.pelanggan.reset', $member) }}"
                                           data-confirm="Reset kata sandi {{ $member->name }} menjadi 123456789? Kata sandi lamanya tidak berlaku lagi.">
@@ -230,12 +260,117 @@
         @endif
     </div>
 
+    {{-- POPUP PERPANJANG / MULAI PAKET --}}
+    <dialog id="dlg-perpanjang" class="dlg">
+        <form method="POST" id="form-perpanjang">
+            @csrf
+            <h3 id="dlg-judul">Perpanjang paket</h3>
+            <p class="sub" id="dlg-sub"></p>
+
+            @if ($paket->isEmpty())
+                <div class="alert alert-err">
+                    Belum ada paket aktif. Buat dulu di menu Paket &amp; Harga.
+                </div>
+                <div style="display:flex;justify-content:flex-end;margin-top:18px">
+                    <button type="button" class="btn btn-outline" data-tutup>Tutup</button>
+                </div>
+            @else
+                <div class="field">
+                    <label for="pilih-paket">Paket</label>
+                    <select id="pilih-paket" name="subscription_plan_id" required>
+                        @foreach ($paket as $p)
+                            <option value="{{ $p->id }}" data-hari="{{ $p->duration_days }}">
+                                {{ $p->name }} · {{ $p->duration_label }}
+                            </option>
+                        @endforeach
+                    </select>
+                </div>
+
+                <div class="ringkas" id="dlg-ringkas"></div>
+
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+                    <button type="button" class="btn btn-outline" data-tutup>Batal</button>
+                    <button type="submit" class="btn btn-primary">Simpan</button>
+                </div>
+            @endif
+        </form>
+    </dialog>
+
     <script>
         // Konfirmasi sebelum form yang punya atribut data-confirm dikirim
         document.addEventListener('submit', function (e) {
             const msg = e.target.dataset.confirm;
             if (msg && !confirm(msg)) e.preventDefault();
         });
+
+        // Popup perpanjang / mulai paket
+        (function () {
+            const dlg = document.getElementById('dlg-perpanjang');
+            if (!dlg) return;
+
+            const form = document.getElementById('form-perpanjang');
+            const pilih = document.getElementById('pilih-paket');
+            const ringkas = document.getElementById('dlg-ringkas');
+            const judul = document.getElementById('dlg-judul');
+            const sub = document.getElementById('dlg-sub');
+            const bulan = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+            const fmt = d => d.getDate() + ' ' + bulan[d.getMonth()] + ' ' + d.getFullYear();
+            let konteks = null;
+
+            // Pratinjau tanggal. Aturannya sama dengan yang dipakai server.
+            function hitung() {
+                if (!konteks || !pilih || pilih.selectedIndex < 0) return;
+
+                const hari = parseInt(pilih.options[pilih.selectedIndex].dataset.hari, 10);
+                const hariIni = new Date();
+                hariIni.setHours(0, 0, 0, 0);
+
+                if (konteks.aktif && konteks.berakhir) {
+                    const lama = new Date(konteks.berakhir + 'T00:00:00');
+                    const baru = new Date(lama);
+                    baru.setDate(baru.getDate() + hari);
+                    ringkas.innerHTML =
+                        '<div>Berakhir sekarang: <b>' + fmt(lama) + '</b></div>' +
+                        '<div>Berakhir setelah diperpanjang: <b>' + fmt(baru) + '</b></div>' +
+                        '<div class="catatan">Disambung dari tanggal berakhir saat ini, sisa hari tidak hangus.</div>';
+                } else {
+                    const baru = new Date(hariIni);
+                    baru.setDate(baru.getDate() + hari);
+                    ringkas.innerHTML =
+                        '<div>Mulai: <b>' + fmt(hariIni) + '</b></div>' +
+                        '<div>Berlaku sampai: <b>' + fmt(baru) + '</b></div>' +
+                        '<div class="catatan">' + (konteks.berakhir
+                            ? 'Paket sebelumnya sudah habis, masa berlaku baru dihitung mulai hari ini.'
+                            : 'Pelanggan belum punya paket, masa berlaku dihitung mulai hari ini.') + '</div>';
+                }
+            }
+
+            document.querySelectorAll('[data-perpanjang]').forEach(function (tombol) {
+                tombol.addEventListener('click', function () {
+                    konteks = {
+                        aktif: tombol.dataset.aktif === '1',
+                        berakhir: tombol.dataset.berakhir || '',
+                    };
+
+                    form.action = tombol.dataset.url;
+                    judul.textContent = tombol.dataset.paket ? 'Perpanjang paket' : 'Mulai paket';
+                    sub.textContent = tombol.dataset.nama +
+                        (tombol.dataset.paket ? ' · paket saat ini: ' + tombol.dataset.paket : ' · belum berlangganan');
+
+                    if (pilih) {
+                        // Pilih paket yang sama dengan paket sekarang sebagai bawaan
+                        if (tombol.dataset.planid) pilih.value = tombol.dataset.planid;
+                        if (pilih.selectedIndex < 0) pilih.selectedIndex = 0;
+                    }
+
+                    hitung();
+                    dlg.showModal();
+                });
+            });
+
+            if (pilih) pilih.addEventListener('change', hitung);
+            dlg.querySelectorAll('[data-tutup]').forEach(b => b.addEventListener('click', () => dlg.close()));
+        })();
     </script>
 
 @endsection
