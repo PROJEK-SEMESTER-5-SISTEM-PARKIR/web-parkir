@@ -4,8 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\AccessRequest;
 use App\Models\FaceProfile;
-use App\Models\Vehicle;
 use App\Models\ParkingGateState;
+use App\Models\ParkingSession;
+use App\Models\Vehicle;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -118,7 +119,7 @@ class AccessController extends Controller
 
             $plate = $this->normalizePlate($plate);
 
-            if ($plate !== '' && !in_array($plate, $normalizedPlates, true)) {
+            if ($plate !== '' && ! in_array($plate, $normalizedPlates, true)) {
                 $normalizedPlates[] = $plate;
             }
         }
@@ -160,14 +161,14 @@ class AccessController extends Controller
             return [
                 $bestVehicle,
                 $bestScore,
-                $bestOcrPlate
+                $bestOcrPlate,
             ];
         }
 
         return [
             null,
             $bestScore,
-            $bestOcrPlate
+            $bestOcrPlate,
         ];
     }
 
@@ -175,13 +176,13 @@ class AccessController extends Controller
     {
         $plates = [];
 
-        if (!empty($plateAi['plate_text'])) {
+        if (! empty($plateAi['plate_text'])) {
             $plates[] = $plateAi['plate_text'];
         }
 
-        if (!empty($plateAi['plate_candidates']) && is_array($plateAi['plate_candidates'])) {
+        if (! empty($plateAi['plate_candidates']) && is_array($plateAi['plate_candidates'])) {
             foreach ($plateAi['plate_candidates'] as $candidate) {
-                if (is_array($candidate) && !empty($candidate['text'])) {
+                if (is_array($candidate) && ! empty($candidate['text'])) {
                     $plates[] = $candidate['text'];
                 }
             }
@@ -204,7 +205,7 @@ class AccessController extends Controller
         foreach ($profiles as $profile) {
             $storedEmbedding = $profile->embedding;
 
-            if (!is_array($storedEmbedding)) {
+            if (! is_array($storedEmbedding)) {
                 continue;
             }
 
@@ -238,7 +239,7 @@ class AccessController extends Controller
 
         return [
             $faceMatch,
-            $faceDistance
+            $faceDistance,
         ];
     }
 
@@ -277,7 +278,7 @@ class AccessController extends Controller
                     $photo->getClientOriginalName()
                 )
                 ->post(
-                    $this->fastApiUrl . '/detect-access'
+                    $this->fastApiUrl.'/detect-access'
                 );
 
             Log::info('AI RESPONSE', [
@@ -313,7 +314,7 @@ class AccessController extends Controller
         [$vehicle, $plateSimilarity, $matchedPlate] =
             $this->findVehicleByPlateCandidates($plates);
 
-        if (!$vehicle) {
+        if (! $vehicle) {
             AccessRequest::create([
                 'member_id' => null,
                 'plate_detected' => $matchedPlate ?: 'UNKNOWN',
@@ -329,17 +330,15 @@ class AccessController extends Controller
                 'status' => 'denied',
                 'message' => 'Kendaraan tidak terdaftar.',
                 'plate_text' => $matchedPlate,
-                'plate_confidence' =>
-                    $ai['plate_confidence'] ?? null,
-                'face_detected' =>
-                    $ai['face_detected'] ?? false,
+                'plate_confidence' => $ai['plate_confidence'] ?? null,
+                'face_detected' => $ai['face_detected'] ?? false,
                 'plate_similarity' => $plateSimilarity,
             ]);
         }
 
         $member = $vehicle->member;
 
-        if (!$member || !$member->is_active) {
+        if (! $member || ! $member->is_active) {
             return response()->json([
                 'success' => true,
                 'status' => 'denied',
@@ -353,7 +352,7 @@ class AccessController extends Controller
 
         $subscription = $this->getActiveSubscription($member);
 
-        if (!$subscription) {
+        if (! $subscription) {
             return response()->json([
                 'success' => true,
                 'status' => 'denied',
@@ -367,7 +366,7 @@ class AccessController extends Controller
 
         $faceEmbedding = $ai['face_embedding'] ?? null;
 
-        if (!is_array($faceEmbedding) || empty($faceEmbedding)) {
+        if (! is_array($faceEmbedding) || empty($faceEmbedding)) {
             return response()->json([
                 'success' => true,
                 'status' => 'denied',
@@ -405,8 +404,7 @@ class AccessController extends Controller
                 : 'Akses ditolak. Wajah tidak cocok.',
             'access_request_id' => $accessRequest->id,
             'plate_text' => $matchedPlate,
-            'plate_confidence' =>
-                $ai['plate_confidence'] ?? null,
+            'plate_confidence' => $ai['plate_confidence'] ?? null,
             'plate_similarity' => $plateSimilarity,
             'member' => [
                 'id' => $member->id,
@@ -419,13 +417,10 @@ class AccessController extends Controller
             ],
             'subscription' => [
                 'id' => $subscription->id,
-                'start_date' =>
-                    $subscription->start_date->toDateString(),
-                'end_date' =>
-                    $subscription->end_date->toDateString(),
+                'start_date' => $subscription->start_date->toDateString(),
+                'end_date' => $subscription->end_date->toDateString(),
             ],
-            'face_detected' =>
-                $ai['face_detected'] ?? false,
+            'face_detected' => $ai['face_detected'] ?? false,
             'face_match' => $faceMatch,
             'face_distance' => $faceDistance,
         ]);
@@ -455,7 +450,7 @@ class AccessController extends Controller
         );
 
         if (
-            !preg_match(
+            ! preg_match(
                 '/^data:image\/(\w+);base64,(.+)$/',
                 $faceImage,
                 $matches
@@ -503,7 +498,7 @@ class AccessController extends Controller
                     ]
                 )
                 ->post(
-                    $this->fastApiUrl . '/extract-embedding'
+                    $this->fastApiUrl.'/extract-embedding'
                 );
 
             Log::info('FACE AI RESPONSE', [
@@ -553,7 +548,7 @@ class AccessController extends Controller
         $faceEmbedding = $faceAi['embedding'] ?? null;
 
         if (
-            !is_array($faceEmbedding) ||
+            ! is_array($faceEmbedding) ||
             empty($faceEmbedding)
         ) {
             $state->update([
@@ -573,7 +568,7 @@ class AccessController extends Controller
             $plateResponse = Http::connectTimeout(5)
                 ->timeout(120)
                 ->get(
-                    $this->fastApiUrl . '/detect-phone-plate'
+                    $this->fastApiUrl.'/detect-phone-plate'
                 );
 
             Log::info('PLATE AI RESPONSE', [
@@ -593,8 +588,7 @@ class AccessController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Kamera HP/AI plat tidak dapat dihubungi.',
+                'message' => 'Kamera HP/AI plat tidak dapat dihubungi.',
                 'error' => $e->getMessage(),
             ], 503);
         }
@@ -613,8 +607,7 @@ class AccessController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Plat kendaraan tidak dapat diproses.',
+                'message' => 'Plat kendaraan tidak dapat diproses.',
                 'ai_status' => $plateResponse->status(),
                 'ai_response' => $plateResponse->json(),
             ], 422);
@@ -623,7 +616,7 @@ class AccessController extends Controller
         $plateAi = $plateResponse->json();
 
         if (
-            !is_array($plateAi) ||
+            ! is_array($plateAi) ||
             ($plateAi['success'] ?? false) !== true
         ) {
             $state->update([
@@ -634,8 +627,7 @@ class AccessController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Kamera HP tidak menghasilkan plat.',
+                'message' => 'Kamera HP tidak menghasilkan plat.',
                 'ai_response' => $plateAi,
             ], 422);
         }
@@ -649,11 +641,10 @@ class AccessController extends Controller
         [$vehicle, $plateSimilarity, $matchedPlate] =
             $this->findVehicleByPlateCandidates($plates);
 
-        if (!$vehicle) {
+        if (! $vehicle) {
             AccessRequest::create([
                 'member_id' => null,
-                'plate_detected' =>
-                    $matchedPlate ?: 'UNKNOWN',
+                'plate_detected' => $matchedPlate ?: 'UNKNOWN',
                 'plate_match' => false,
                 'face_match' => false,
                 'status' => 'denied',
@@ -670,25 +661,20 @@ class AccessController extends Controller
             return response()->json([
                 'success' => true,
                 'status' => 'denied',
-                'message' =>
-                    'Kendaraan tidak terdaftar.',
-                'plate_text' =>
-                    $matchedPlate ?: null,
-                'plate_detected' =>
-                    $plateAi['plate_text'] ?? null,
-                'plate_similarity' =>
-                    $plateSimilarity,
+                'message' => 'Kendaraan tidak terdaftar.',
+                'plate_text' => $matchedPlate ?: null,
+                'plate_detected' => $plateAi['plate_text'] ?? null,
+                'plate_similarity' => $plateSimilarity,
                 'plate_candidates' => $plates,
             ]);
         }
 
         $member = $vehicle->member;
 
-        if (!$member || !$member->is_active) {
+        if (! $member || ! $member->is_active) {
             AccessRequest::create([
                 'member_id' => $member?->id,
-                'plate_detected' =>
-                    $matchedPlate,
+                'plate_detected' => $matchedPlate,
                 'plate_match' => true,
                 'face_match' => false,
                 'status' => 'denied',
@@ -707,19 +693,17 @@ class AccessController extends Controller
                 'status' => 'denied',
                 'message' => 'Member tidak aktif.',
                 'plate_text' => $matchedPlate,
-                'plate_similarity' =>
-                    $plateSimilarity,
+                'plate_similarity' => $plateSimilarity,
                 'member_id' => $member?->id,
             ]);
         }
 
         $subscription = $this->getActiveSubscription($member);
 
-        if (!$subscription) {
+        if (! $subscription) {
             AccessRequest::create([
                 'member_id' => $member->id,
-                'plate_detected' =>
-                    $matchedPlate,
+                'plate_detected' => $matchedPlate,
                 'plate_match' => true,
                 'face_match' => false,
                 'status' => 'denied',
@@ -736,11 +720,9 @@ class AccessController extends Controller
             return response()->json([
                 'success' => true,
                 'status' => 'denied',
-                'message' =>
-                    'Subscription parkir tidak aktif.',
+                'message' => 'Subscription parkir tidak aktif.',
                 'plate_text' => $matchedPlate,
-                'plate_similarity' =>
-                    $plateSimilarity,
+                'plate_similarity' => $plateSimilarity,
                 'member_id' => $member->id,
             ]);
         }
@@ -757,11 +739,10 @@ class AccessController extends Controller
             'face_match' => $faceMatch,
         ]);
 
-        if (!$faceMatch) {
+        if (! $faceMatch) {
             AccessRequest::create([
                 'member_id' => $member->id,
-                'plate_detected' =>
-                    $matchedPlate,
+                'plate_detected' => $matchedPlate,
                 'plate_match' => true,
                 'face_match' => false,
                 'status' => 'denied',
@@ -778,15 +759,11 @@ class AccessController extends Controller
             return response()->json([
                 'success' => true,
                 'status' => 'denied',
-                'message' =>
-                    'Akses ditolak. Wajah tidak cocok.',
+                'message' => 'Akses ditolak. Wajah tidak cocok.',
                 'plate_text' => $matchedPlate,
-                'plate_detected' =>
-                    $plateAi['plate_text'] ?? null,
-                'plate_confidence' =>
-                    $plateAi['plate_confidence'] ?? null,
-                'plate_similarity' =>
-                    $plateSimilarity,
+                'plate_detected' => $plateAi['plate_text'] ?? null,
+                'plate_confidence' => $plateAi['plate_confidence'] ?? null,
+                'plate_similarity' => $plateSimilarity,
                 'plate_candidates' => $plates,
                 'member' => [
                     'id' => $member->id,
@@ -794,47 +771,141 @@ class AccessController extends Controller
                 ],
                 'vehicle' => [
                     'id' => $vehicle->id,
-                    'plate_number' =>
-                        $vehicle->plate_number,
-                    'vehicle_type' =>
-                        $vehicle->vehicle_type,
+                    'plate_number' => $vehicle->plate_number,
+                    'vehicle_type' => $vehicle->vehicle_type,
                 ],
                 'face_match' => false,
                 'face_distance' => $faceDistance,
             ]);
         }
 
+        $activeSession = ParkingSession::where('vehicle_id', $vehicle->id)
+            ->where('status', 'active')
+            ->latest('entry_time')
+            ->first();
+
+        $gateName = strtolower($gate ?? 'gate_utama');
+        $direction = 'in';
+        if (str_contains($gateName, 'keluar') || str_contains($gateName, 'exit')) {
+            $direction = 'out';
+        } elseif (str_contains($gateName, 'masuk') || str_contains($gateName, 'entry')) {
+            $direction = 'in';
+        } else {
+            $direction = $activeSession ? 'out' : 'in';
+        }
+
+        if ($direction === 'in' && $activeSession) {
+            AccessRequest::create([
+                'member_id' => $member->id,
+                'vehicle_id' => $vehicle->id,
+                'gate' => $gate,
+                'direction' => 'in',
+                'reason' => 'already_inside',
+                'plate_detected' => $matchedPlate,
+                'plate_match' => true,
+                'face_match' => true,
+                'face_distance' => $faceDistance,
+                'status' => 'denied',
+                'requested_at' => now(),
+                'responded_at' => now(),
+            ]);
+
+            $state->update([
+                'trigger' => false,
+                'izin' => 'TOLAK',
+                'status' => 'AKSES DITOLAK: MOBIL SUDAH DI DALAM',
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'status' => 'denied',
+                'message' => 'Akses ditolak. Kendaraan sudah berada di dalam area parkir (belum keluar).',
+                'reason' => 'already_inside',
+            ], 422);
+        }
+
+        if ($direction === 'out' && ! $activeSession) {
+            AccessRequest::create([
+                'member_id' => $member->id,
+                'vehicle_id' => $vehicle->id,
+                'gate' => $gate,
+                'direction' => 'out',
+                'reason' => 'not_inside',
+                'plate_detected' => $matchedPlate,
+                'plate_match' => true,
+                'face_match' => true,
+                'face_distance' => $faceDistance,
+                'status' => 'denied',
+                'requested_at' => now(),
+                'responded_at' => now(),
+            ]);
+
+            $state->update([
+                'trigger' => false,
+                'izin' => 'TOLAK',
+                'status' => 'AKSES DITOLAK: MOBIL SUDAH KELUAR',
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'status' => 'denied',
+                'message' => 'Akses ditolak. Kendaraan tidak berada di dalam area parkir (belum masuk / sudah keluar).',
+                'reason' => 'not_inside',
+            ], 422);
+        }
+
         $accessRequest = AccessRequest::create([
             'member_id' => $member->id,
-            'plate_detected' =>
-                $matchedPlate,
+            'vehicle_id' => $vehicle->id,
+            'gate' => $gate,
+            'direction' => $direction,
+            'reason' => null,
+            'plate_detected' => $matchedPlate,
             'plate_match' => true,
             'face_match' => true,
+            'face_distance' => $faceDistance,
             'status' => 'auto_approved',
             'requested_at' => now(),
             'responded_at' => now(),
         ]);
 
+        if ($direction === 'out') {
+            ParkingSession::where('vehicle_id', $vehicle->id)
+                ->where('status', 'active')
+                ->update([
+                    'exit_access_request_id' => $accessRequest->id,
+                    'exit_time' => now(),
+                    'status' => 'completed',
+                ]);
+
+            $gateStatus = 'PALANG TERBUKA - KENDARAAN KELUAR';
+        } else {
+            ParkingSession::create([
+                'member_id' => $member->id,
+                'vehicle_id' => $vehicle->id,
+                'entry_access_request_id' => $accessRequest->id,
+                'entry_time' => now(),
+                'status' => 'active',
+            ]);
+
+            $gateStatus = 'PALANG TERBUKA - KENDARAAN MASUK';
+        }
+
         $state->update([
             'trigger' => false,
             'izin' => 'BUKA',
-            'status' => 'PALANG TERBUKA',
+            'status' => $gateStatus,
         ]);
 
         return response()->json([
             'success' => true,
             'status' => 'auto_approved',
-            'message' =>
-                'Akses diterima. Palang dapat dibuka.',
-            'access_request_id' =>
-                $accessRequest->id,
+            'message' => 'Akses diterima. Palang dapat dibuka.',
+            'access_request_id' => $accessRequest->id,
             'plate_text' => $matchedPlate,
-            'plate_detected' =>
-                $plateAi['plate_text'] ?? null,
-            'plate_confidence' =>
-                $plateAi['plate_confidence'] ?? null,
-            'plate_similarity' =>
-                $plateSimilarity,
+            'plate_detected' => $plateAi['plate_text'] ?? null,
+            'plate_confidence' => $plateAi['plate_confidence'] ?? null,
+            'plate_similarity' => $plateSimilarity,
             'plate_candidates' => $plates,
             'member' => [
                 'id' => $member->id,
@@ -842,17 +913,13 @@ class AccessController extends Controller
             ],
             'vehicle' => [
                 'id' => $vehicle->id,
-                'plate_number' =>
-                    $vehicle->plate_number,
-                'vehicle_type' =>
-                    $vehicle->vehicle_type,
+                'plate_number' => $vehicle->plate_number,
+                'vehicle_type' => $vehicle->vehicle_type,
             ],
             'subscription' => [
                 'id' => $subscription->id,
-                'start_date' =>
-                    $subscription->start_date->toDateString(),
-                'end_date' =>
-                    $subscription->end_date->toDateString(),
+                'start_date' => $subscription->start_date->toDateString(),
+                'end_date' => $subscription->end_date->toDateString(),
             ],
             'face_match' => true,
             'face_distance' => $faceDistance,

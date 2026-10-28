@@ -3,12 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\ParkingGateState;
-use App\Models\FaceProfile;
-use App\Models\Vehicle;
 use App\Models\AccessRequest;
-use App\Models\ParkingSession;
+use App\Models\FaceProfile;
 use App\Models\Member;
+use App\Models\ParkingGateState;
+use App\Models\ParkingSession;
+use App\Models\Vehicle;
 use Illuminate\Http\Request;
 
 class ParkingGateController extends Controller
@@ -99,7 +99,7 @@ class ParkingGateController extends Controller
 
             $plate = $this->normalizePlate($plate);
 
-            if ($plate !== '' && !in_array($plate, $normalizedPlates, true)) {
+            if ($plate !== '' && ! in_array($plate, $normalizedPlates, true)) {
                 $normalizedPlates[] = $plate;
             }
         }
@@ -142,13 +142,13 @@ class ParkingGateController extends Controller
     {
         $plates = [];
 
-        if (!empty($data['plate_text'])) {
+        if (! empty($data['plate_text'])) {
             $plates[] = $data['plate_text'];
         }
 
-        if (!empty($data['plate_candidates']) && is_array($data['plate_candidates'])) {
+        if (! empty($data['plate_candidates']) && is_array($data['plate_candidates'])) {
             foreach ($data['plate_candidates'] as $candidate) {
-                if (is_array($candidate) && !empty($candidate['text'])) {
+                if (is_array($candidate) && ! empty($candidate['text'])) {
                     $plates[] = $candidate['text'];
                 }
             }
@@ -169,13 +169,13 @@ class ParkingGateController extends Controller
 
     private function evaluateGate(ParkingGateState $state): void
     {
-        if (!$state->face_match || !$state->plate_match) {
+        if (! $state->face_match || ! $state->plate_match) {
             return;
         }
 
         if (
-            !$state->face_member_id ||
-            !$state->plate_member_id ||
+            ! $state->face_member_id ||
+            ! $state->plate_member_id ||
             $state->face_member_id != $state->plate_member_id
         ) {
             $state->update([
@@ -189,7 +189,7 @@ class ParkingGateController extends Controller
 
         $member = Member::find($state->face_member_id);
 
-        if (!$member || !$member->is_active) {
+        if (! $member || ! $member->is_active) {
             $state->update([
                 'trigger' => false,
                 'izin' => 'TOLAK',
@@ -201,7 +201,7 @@ class ParkingGateController extends Controller
 
         $subscription = $this->getActiveSubscription($member);
 
-        if (!$subscription) {
+        if (! $subscription) {
             $state->update([
                 'trigger' => false,
                 'izin' => 'TOLAK',
@@ -213,7 +213,7 @@ class ParkingGateController extends Controller
 
         $vehicleId = $state->plate_vehicle_id;
 
-        if (!$vehicleId) {
+        if (! $vehicleId) {
             $state->update([
                 'trigger' => false,
                 'izin' => 'TOLAK',
@@ -228,22 +228,94 @@ class ParkingGateController extends Controller
             ->latest('entry_time')
             ->first();
 
+        $gateName = strtolower($state->gate ?? 'gate_utama');
+        $direction = 'in';
+        if (str_contains($gateName, 'keluar') || str_contains($gateName, 'exit')) {
+            $direction = 'out';
+        } elseif (str_contains($gateName, 'masuk') || str_contains($gateName, 'entry')) {
+            $direction = 'in';
+        } else {
+            // Untuk gerbang dua arah (seperti gate_utama):
+            // Jika ada sesi aktif di dalam, arahnya keluar ('out').
+            // Jika tidak ada sesi aktif, arahnya masuk ('in').
+            $direction = $activeSession ? 'out' : 'in';
+        }
+
+        // Cek: Mobil mau masuk tapi sudah berada di dalam
+        if ($direction === 'in' && $activeSession) {
+            AccessRequest::create([
+                'member_id' => $member->id,
+                'vehicle_id' => $vehicleId,
+                'gate' => $state->gate,
+                'direction' => 'in',
+                'reason' => 'already_inside',
+                'plate_detected' => $state->plate_detected ?? 'UNKNOWN',
+                'plate_match' => true,
+                'face_match' => true,
+                'face_distance' => $state->face_distance,
+                'status' => 'denied',
+                'requested_at' => now(),
+                'responded_at' => now(),
+            ]);
+
+            $state->update([
+                'trigger' => false,
+                'izin' => 'TOLAK',
+                'status' => 'AKSES DITOLAK: MOBIL SUDAH DI DALAM',
+            ]);
+
+            return;
+        }
+
+        // Cek: Mobil mau keluar tapi tidak berada di dalam (sudah keluar)
+        if ($direction === 'out' && ! $activeSession) {
+            AccessRequest::create([
+                'member_id' => $member->id,
+                'vehicle_id' => $vehicleId,
+                'gate' => $state->gate,
+                'direction' => 'out',
+                'reason' => 'not_inside',
+                'plate_detected' => $state->plate_detected ?? 'UNKNOWN',
+                'plate_match' => true,
+                'face_match' => true,
+                'face_distance' => $state->face_distance,
+                'status' => 'denied',
+                'requested_at' => now(),
+                'responded_at' => now(),
+            ]);
+
+            $state->update([
+                'trigger' => false,
+                'izin' => 'TOLAK',
+                'status' => 'AKSES DITOLAK: MOBIL SUDAH KELUAR',
+            ]);
+
+            return;
+        }
+
         $accessRequest = AccessRequest::create([
             'member_id' => $member->id,
+            'vehicle_id' => $vehicleId,
+            'gate' => $state->gate,
+            'direction' => $direction,
+            'reason' => null,
             'plate_detected' => $state->plate_detected ?? 'UNKNOWN',
             'plate_match' => true,
             'face_match' => true,
+            'face_distance' => $state->face_distance,
             'status' => 'auto_approved',
             'requested_at' => now(),
             'responded_at' => now(),
         ]);
 
-        if ($activeSession) {
-            $activeSession->update([
-                'exit_access_request_id' => $accessRequest->id,
-                'exit_time' => now(),
-                'status' => 'completed',
-            ]);
+        if ($direction === 'out') {
+            ParkingSession::where('vehicle_id', $vehicleId)
+                ->where('status', 'active')
+                ->update([
+                    'exit_access_request_id' => $accessRequest->id,
+                    'exit_time' => now(),
+                    'status' => 'completed',
+                ]);
 
             $state->update([
                 'trigger' => false,
@@ -281,6 +353,7 @@ class ParkingGateController extends Controller
                 'status' => 'MENUNGGU VERIFIKASI',
                 'face_match' => false,
                 'face_member_id' => null,
+                'face_distance' => null,
                 'plate_match' => false,
                 'plate_member_id' => null,
                 'plate_vehicle_id' => null,
@@ -326,6 +399,7 @@ class ParkingGateController extends Controller
                 'status' => 'SIAGA',
                 'face_match' => false,
                 'face_member_id' => null,
+                'face_distance' => null,
                 'plate_match' => false,
                 'plate_member_id' => null,
                 'plate_vehicle_id' => null,
@@ -349,6 +423,7 @@ class ParkingGateController extends Controller
                 ['gate' => $gate],
                 ['trigger' => false, 'izin' => 'SIAGA', 'status' => 'SIAGA']
             );
+
             return response()->json([
                 'success' => true,
                 'data' => $state,
@@ -384,7 +459,7 @@ class ParkingGateController extends Controller
     public function faceResult(Request $request)
     {
         $request->validate([
-            'gate'      => 'required|string',
+            'gate' => 'required|string',
             'embedding' => 'nullable|array',     // embedding FastAPI (opsional)
             'member_id' => 'nullable|integer',   // member_id LBPH (opsional)
         ]);
@@ -400,32 +475,36 @@ class ParkingGateController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Gate tidak sedang menunggu verifikasi.',
-                'izin'    => $state->izin,
+                'izin' => $state->izin,
             ], 409);
         }
 
         // ── Mode 1: LBPH member_id langsung dari Python ───────────────────
-        if ($request->filled('member_id') && !$request->filled('embedding')) {
+        if ($request->filled('member_id') && ! $request->filled('embedding')) {
             $memberId = (int) $request->input('member_id');
-            $member   = Member::find($memberId);
+            $distance = $request->filled('distance') ? (float) $request->input('distance') : null;
+            $member = Member::find($memberId);
 
             $faceMatch = $member && $member->is_active;
 
             $state->update($faceMatch
                 ? ['face_match' => true,  'face_member_id' => $member->id,
-                   'status' => 'WAJAH COCOK - MENUNGGU PLAT']
+                    'face_distance' => $distance,
+                    'status' => 'WAJAH COCOK - MENUNGGU PLAT']
                 : ['face_match' => false, 'face_member_id' => null,
-                   'status' => 'WAJAH TIDAK COCOK - MENUNGGU PLAT']
+                    'face_distance' => $distance,
+                    'status' => 'WAJAH TIDAK COCOK - MENUNGGU PLAT']
             );
 
             $this->evaluateGate($state->fresh());
 
             return response()->json([
-                'success'     => true,
-                'face_match'  => $faceMatch,
-                'member_id'   => $member?->id,
+                'success' => true,
+                'face_match' => $faceMatch,
+                'member_id' => $member?->id,
                 'member_name' => $member?->name,
-                'message'     => $faceMatch
+                'distance' => $distance,
+                'message' => $faceMatch
                     ? 'Wajah cocok (LBPH). Menunggu hasil plat.'
                     : 'Wajah tidak cocok (LBPH). Menunggu hasil plat.',
             ]);
@@ -441,26 +520,26 @@ class ParkingGateController extends Controller
             ], 422);
         }
 
-        $profiles     = FaceProfile::with('member')->get();
-        $bestMember   = null;
+        $profiles = FaceProfile::with('member')->get();
+        $bestMember = null;
         $bestDistance = null;
-        $bestProfile  = null;
+        $bestProfile = null;
 
         foreach ($profiles as $profile) {
-            if (!$profile->embedding || !is_array($profile->embedding) ||
+            if (! $profile->embedding || ! is_array($profile->embedding) ||
                 count($profile->embedding) !== 128) {
                 continue;
             }
             $sum = 0.0;
             for ($i = 0; $i < 128; $i++) {
-                $diff = (float)$inputEmbedding[$i] - (float)$profile->embedding[$i];
+                $diff = (float) $inputEmbedding[$i] - (float) $profile->embedding[$i];
                 $sum += $diff * $diff;
             }
             $distance = sqrt($sum);
             if ($bestDistance === null || $distance < $bestDistance) {
                 $bestDistance = $distance;
-                $bestMember   = $profile->member;
-                $bestProfile  = $profile;
+                $bestMember = $profile->member;
+                $bestProfile = $profile;
             }
         }
 
@@ -469,21 +548,23 @@ class ParkingGateController extends Controller
 
         $state->update($faceMatch
             ? ['face_match' => true,  'face_member_id' => $bestMember->id,
-               'status' => 'WAJAH COCOK - MENUNGGU PLAT']
+                'face_distance' => $bestDistance,
+                'status' => 'WAJAH COCOK - MENUNGGU PLAT']
             : ['face_match' => false, 'face_member_id' => null,
-               'status' => 'WAJAH TIDAK COCOK - MENUNGGU PLAT']
+                'face_distance' => $bestDistance,
+                'status' => 'WAJAH TIDAK COCOK - MENUNGGU PLAT']
         );
 
         $this->evaluateGate($state->fresh());
 
         return response()->json([
-            'success'         => true,
-            'face_match'      => (bool)$faceMatch,
-            'member_id'       => $bestMember?->id,
-            'member_name'     => $bestMember?->name,
+            'success' => true,
+            'face_match' => (bool) $faceMatch,
+            'member_id' => $bestMember?->id,
+            'member_name' => $bestMember?->name,
             'face_profile_id' => $bestProfile?->id,
-            'distance'        => $bestDistance,
-            'message'         => $faceMatch
+            'distance' => $bestDistance,
+            'message' => $faceMatch
                 ? 'Wajah cocok. Menunggu hasil plat.'
                 : 'Wajah tidak cocok. Menunggu hasil plat.',
         ]);
@@ -530,7 +611,7 @@ class ParkingGateController extends Controller
         [$vehicle, $similarity, $matchedPlate] =
             $this->findVehicleByPlateCandidates($plates);
 
-        if (!$vehicle) {
+        if (! $vehicle) {
             $state->update([
                 'plate_match' => false,
                 'plate_member_id' => null,
@@ -559,7 +640,7 @@ class ParkingGateController extends Controller
 
         $member = $vehicle->member;
 
-        if (!$member || !$member->is_active) {
+        if (! $member || ! $member->is_active) {
             $state->update([
                 'plate_match' => false,
                 'plate_member_id' => $member?->id,
@@ -580,7 +661,7 @@ class ParkingGateController extends Controller
 
         $subscription = $this->getActiveSubscription($member);
 
-        if (!$subscription) {
+        if (! $subscription) {
             $state->update([
                 'plate_match' => false,
                 'plate_member_id' => $member->id,
@@ -613,12 +694,12 @@ class ParkingGateController extends Controller
 
         return response()->json([
             'success' => true,
-            'plate_match' => (bool)$state->plate_match,
+            'plate_match' => (bool) $state->plate_match,
             'member_id' => $member->id,
             'member_name' => $member->name,
             'plate_detected' => $matchedPlate,
             'plate_similarity' => $similarity,
-            'face_match' => (bool)$state->face_match,
+            'face_match' => (bool) $state->face_match,
             'face_member_id' => $state->face_member_id,
             'izin' => $state->izin,
             'status' => $state->status,

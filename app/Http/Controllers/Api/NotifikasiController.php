@@ -15,8 +15,11 @@ use Illuminate\Support\Facades\Log;
 class NotifikasiController extends Controller
 {
     private const BUZZER_DETIK = 10;          // lama buzzer menyala
+
     private const BUZZER_JEDA = 15;           // jeda sebelum boleh ditekan lagi
+
     private const JENDELA_INSIDEN_MENIT = 5;  // buzzer hanya untuk insiden yang masih baru
+
     private const STATUS_BOLEH_BUZZER = ['pending', 'rejected_by_member', 'timeout'];
 
     /** GET /api/notifikasi */
@@ -166,12 +169,26 @@ class NotifikasiController extends Controller
     {
         $sesi = ParkingSession::where('vehicle_id', $req->vehicle_id)->active()->latest('entry_time')->first();
 
-        if ($sesi) {
-            $sesi->update([
-                'exit_access_request_id' => $req->id,
-                'exit_time' => now(),
-                'status' => 'completed',
-            ]);
+        $gateLower = strtolower($state->gate ?? '');
+        $direction = $req->direction;
+        if (empty($direction)) {
+            if (str_contains($gateLower, 'keluar') || str_contains($gateLower, 'exit')) {
+                $direction = 'out';
+            } elseif (str_contains($gateLower, 'masuk') || str_contains($gateLower, 'entry')) {
+                $direction = 'in';
+            } else {
+                $direction = $sesi ? 'out' : 'in';
+            }
+        }
+
+        if ($direction === 'out' || $direction === 'exit') {
+            ParkingSession::where('vehicle_id', $req->vehicle_id)
+                ->where('status', 'active')
+                ->update([
+                    'exit_access_request_id' => $req->id,
+                    'exit_time' => now(),
+                    'status' => 'completed',
+                ]);
             $status = 'PALANG TERBUKA - KENDARAAN KELUAR (DIIZINKAN PEMILIK)';
         } else {
             ParkingSession::create([
