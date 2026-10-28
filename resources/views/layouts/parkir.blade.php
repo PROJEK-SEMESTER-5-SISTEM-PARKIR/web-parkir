@@ -95,6 +95,7 @@
             <div class="label">Monitoring</div>
             <a href="{{ route('parkir.slot') }}" class="{{ request()->routeIs('parkir.slot*') ? 'active' : '' }}">Slot Parkir</a>
             <a href="{{ route('parkir.darurat') }}" class="{{ request()->routeIs('parkir.darurat') ? 'active' : '' }}">Buka Pintu Darurat</a>
+            <a href="{{ route('parkir.kamera') }}" class="{{ request()->routeIs('parkir.kamera') ? 'active' : '' }}">Kamera Deteksi</a>
             {{-- <a href="{{ route('parkir.logs.index') }}">Log Akses</a> --}}
             {{-- <a href="{{ route('parkir.alerts.index') }}">Security Alert</a> --}}
             {{-- <a href="{{ route('parkir.gate.index') }}">Kontrol Palang</a> --}}

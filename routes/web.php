@@ -10,6 +10,7 @@ use App\Http\Controllers\adminParkir\SlotController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SuperAdmin\AdminAccountController;
 use App\Http\Controllers\adminParkir\PaketController;
+use App\Http\Controllers\adminParkir\KameraController;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Support\Facades\Route;
@@ -72,6 +73,7 @@ Route::middleware(['auth', 'role:admin_parkir'])
         Route::post('/paket', [PaketController::class, 'store'])->name('paket.store');
         Route::get('/paket/{plan}/ubah', [PaketController::class, 'edit'])->name('paket.edit');
         Route::put('/paket/{plan}', [PaketController::class, 'update'])->name('paket.update');
+        Route::get('/kamera', [KameraController::class, 'index'])->name('kamera');
         Route::patch('/paket/{plan}/status', [PaketController::class, 'toggle'])->name('paket.toggle');
         Route::delete('/paket/{plan}', [PaketController::class, 'destroy'])->name('paket.destroy');
          Route::post('/pelanggan/{member}/perpanjang', [PelangganController::class, 'perpanjang'])->name('pelanggan.perpanjang');
