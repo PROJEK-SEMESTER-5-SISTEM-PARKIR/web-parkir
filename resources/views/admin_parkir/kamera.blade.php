@@ -6,7 +6,7 @@
 
 @section('content')
 <style>
-    .km-top{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+    .km-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
     .km-live{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
     .km-dot{width:9px;height:9px;border-radius:50%;background:#9aa7b6}
     .km-dot.on{background:var(--green);box-shadow:0 0 0 4px rgba(31,157,97,.18)}
@@ -24,7 +24,15 @@
     .km-off b{color:#fff;font-size:16px}
     .km-off span{font-size:13px;max-width:340px;line-height:1.5}
     .km-badge{position:absolute;top:12px;left:12px;padding:5px 12px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff;font-size:12.5px;font-weight:700;z-index:2}
-    .km-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--muted)}
+    .km-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--muted)}
+
+    .km-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line, #e2e8f0)}
+    .km-btn-in{background:#0d9488;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:opacity .2s}
+    .km-btn-in:hover{opacity:.9}
+    .km-btn-out{background:#4f46e5;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:opacity .2s}
+    .km-btn-out:hover{opacity:.9}
+    .km-btn-rst{background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:6px 14px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background .2s}
+    .km-btn-rst:hover{background:#e2e8f0}
 
     .km-side{display:flex;flex-direction:column;gap:20px}
     .km-card h3{margin:0 0 14px;font-size:15px}
@@ -52,6 +60,9 @@
 </style>
 
 <div class="km-top">
+    <div style="font-size:13.5px;color:var(--muted)">
+        Status AI: <strong>Layanan Deteksi Parkir</strong>
+    </div>
     <div class="km-live"><span class="km-dot" id="kmDot"></span><span id="kmLive">Menghubungkan...</span></div>
 </div>
 
@@ -64,12 +75,27 @@
             <div class="km-off">
                 <svg viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/><path d="M3 3l18 18"/></svg>
                 <b>Kamera belum tersambung</b>
-                <span>Siaran dari layanan AI akan tampil di sini, lengkap dengan kotak wajah dan plat.</span>
+                <span>Siaran langsung dari <code>test_akses_parkir.py</code> akan otomatis muncul di sini begitu script dijalankan.</span>
             </div>
         </div>
+
         <div class="km-foot">
-            <span id="kmSrc">Sumber: {{ $streamUrl }}</span>
-            <button type="button" class="btn btn-outline" id="kmReload" style="padding:6px 14px">Muat ulang kamera</button>
+            <span id="kmSrc">Sumber stream: {{ $streamUrl }}</span>
+            <button type="button" class="btn btn-outline" id="kmReload" style="padding:5px 12px;font-size:12.5px">Muat ulang kamera</button>
+        </div>
+
+        {{-- Kontrol Cepat Gerbang --}}
+        <div class="km-controls">
+            <button type="button" class="km-btn-in" id="btnTrigMasuk" title="Simulasi kendaraan tiba di Pintu Masuk">
+                🚗 Trigger Pintu Masuk
+            </button>
+            <button type="button" class="km-btn-out" id="btnTrigKeluar" title="Simulasi kendaraan tiba di Pintu Keluar">
+                🚙 Trigger Pintu Keluar
+            </button>
+            <button type="button" class="km-btn-rst" id="btnResetGate" title="Kembalikan status gerbang ke SIAGA">
+                🔄 Reset Siaga
+            </button>
+            <span id="trigNotice" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
         </div>
     </div>
 
@@ -103,20 +129,92 @@
 <script>
 (function () {
     const STATUS_URL = @json(url('/api/parking/verification-status'));
+    const TRIGGER_URL = @json(url('/api/parking/trigger'));
+    const RESET_URL = @json(url('/api/parking/reset'));
     const STREAM_URL = @json($streamUrl);
     const NAMES = @json($gates);
 
     const $ = id => document.getElementById(id);
     const stage = $('kmStage'), feed = $('kmFeed');
     let lastKey = '';
+    let streamRetryTimer = null;
 
-    // ===== Video =====
+    // ===== Video Auto-Connect & Auto-Reconnect =====
     function loadFeed() {
-        stage.classList.remove('has-feed');
-        feed.onload = () => stage.classList.add('has-feed');
-        feed.onerror = () => stage.classList.remove('has-feed');
+        if (streamRetryTimer) {
+            clearTimeout(streamRetryTimer);
+            streamRetryTimer = null;
+        }
+
+        feed.onload = () => {
+            stage.classList.add('has-feed');
+        };
+
+        feed.onerror = () => {
+            stage.classList.remove('has-feed');
+            // Coba sambungkan otomatis setiap 2 detik jika kamera belum online
+            streamRetryTimer = setTimeout(loadFeed, 2000);
+        };
+
         feed.src = STREAM_URL + '?t=' + Date.now();
     }
+
+    // Interval cek jika frame MJPEG sudah masuk (beberapa browser tidak memicu onload pada MJPEG)
+    setInterval(() => {
+        if (feed.naturalWidth > 0 && !stage.classList.contains('has-feed')) {
+            stage.classList.add('has-feed');
+        }
+    }, 800);
+
+    // ===== Trigger Gerbang =====
+    async function kirimTrigger(gate) {
+        const notice = $('trigNotice');
+        if (notice) notice.textContent = 'Memicu ' + (NAMES[gate] || gate) + '...';
+        try {
+            const res = await fetch(TRIGGER_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ gate: gate })
+            });
+            const j = await res.json();
+            if (notice) {
+                notice.textContent = (NAMES[gate] || gate) + ' dipicu!';
+                setTimeout(() => { notice.textContent = ''; }, 3500);
+            }
+            poll();
+        } catch (e) {
+            if (notice) notice.textContent = 'Gagal trigger: ' + e.message;
+        }
+    }
+
+    async function kirimReset() {
+        const notice = $('trigNotice');
+        if (notice) notice.textContent = 'Mereset gerbang...';
+        try {
+            await fetch(RESET_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ gate: 'gate_masuk' })
+            });
+            if (notice) {
+                notice.textContent = 'Gerbang direset ke SIAGA';
+                setTimeout(() => { notice.textContent = ''; }, 3000);
+            }
+            poll();
+        } catch (e) {
+            if (notice) notice.textContent = 'Gagal reset';
+        }
+    }
+
+    $('btnTrigMasuk')?.addEventListener('click', () => kirimTrigger('gate_masuk'));
+    $('btnTrigKeluar')?.addEventListener('click', () => kirimTrigger('gate_keluar'));
+    $('btnResetGate')?.addEventListener('click', kirimReset);
 
     // ===== Status gerbang =====
     function setIcon(id, state) { $(id).className = 'km-ic ' + (state || ''); }
@@ -168,7 +266,7 @@
             if (j && j.data) {
                 render(j.data);
                 $('kmDot').className = 'km-dot on';
-                $('kmLive').textContent = 'Terhubung · diperbarui ' + new Date().toLocaleTimeString('id-ID');
+                $('kmLive').textContent = 'Terhubung · ' + new Date().toLocaleTimeString('id-ID');
                 return;
             }
             throw new Error('kosong');
