@@ -14,6 +14,15 @@
         .dlg .sub{margin:0 0 16px;color:var(--muted);font-size:14px}
         .ringkas{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.7}
         .ringkas .catatan{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+        .aksi-list{position:fixed;z-index:50;min-width:220px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 30px rgba(11,31,51,.18);padding:6px}
+        .aksi-list[hidden]{display:none}
+        .aksi-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;padding:9px 12px;border:0;background:none;font:inherit;font-size:14px;text-align:left;border-radius:8px;cursor:pointer;color:var(--text)}
+        .aksi-item:hover{background:var(--bg)}
+        .aksi-item small{font-size:12px;color:var(--muted)}
+        .aksi-item.bahaya{color:var(--red)}
+        .aksi-item.mati{opacity:.5;cursor:not-allowed}
+        .aksi-item.mati:hover{background:none}
+        .aksi-sep{height:1px;background:var(--line);margin:6px 4px}
     </style>
 
     {{-- HASIL RESET KATA SANDI (tampil sekali setelah admin menekan tombol reset) --}}
@@ -169,56 +178,39 @@
                                 {{ $member->created_at?->format('d M Y') }}
                             </td>
 
-                            {{-- Aksi --}}
+                            {{-- Aksi: satu tombol, semua pilihan ada di menu (lihat JS di bawah) --}}
                             <td>
+                                @php
+                                    $masihBerlaku = $sub && $sub->status === 'active' && $sub->end_date->gte(now()->startOfDay());
+                                    // tombol menonjol (biru) kalau belum punya paket, sudah habis, atau tinggal <= 7 hari
+                                    $mendesak = $member->is_active && (! $sub || $sub->end_date->lte(now()->startOfDay()->addDays(7)));
+
+                                    $aksi = [
+                                        'nama'   => $member->name,
+                                        'aktif'  => (bool) $member->is_active,
+                                        // Pembayaran / perpanjang: hanya untuk pelanggan aktif, boleh kapan saja
+                                        'bayar'  => $member->is_active ? [
+                                            'url'        => route('parkir.pelanggan.perpanjang', $member),
+                                            'paket'      => $sub?->plan?->name,
+                                            'planId'     => $sub?->subscription_plan_id,
+                                            'berakhir'   => $sub?->end_date?->format('Y-m-d'),
+                                            'berlaku'    => (bool) $masihBerlaku,
+                                            'punyaPaket' => (bool) $sub,
+                                        ] : null,
+                                        'reset'  => route('parkir.pelanggan.reset', $member),
+                                        'status' => route('parkir.pelanggan.status', $member),
+                                        // Pelanggan yang punya riwayat langganan tidak boleh dihapus, cukup dinonaktifkan
+                                        'hapus'  => $member->latestSubscription ? null : route('parkir.pelanggan.destroy', $member),
+                                    ];
+                                @endphp
                                 <div class="actions">
-                                    {{-- Perpanjang / mulai paket: hanya untuk pelanggan aktif, boleh kapan saja --}}
-                                    @if ($member->is_active)
-                                        @php
-                                            $masihBerlaku = $sub && $sub->status === 'active' && $sub->end_date->gte(now()->startOfDay());
-                                            // menonjol (biru) kalau belum punya paket, sudah habis, atau tinggal <= 7 hari
-                                            $mendesak = ! $sub || $sub->end_date->lte(now()->startOfDay()->addDays(7));
-                                        @endphp
-                                        <button type="button"
-                                                class="btn btn-sm {{ $mendesak ? 'btn-primary' : 'btn-outline' }}"
-                                                data-perpanjang
-                                                data-url="{{ route('parkir.pelanggan.perpanjang', $member) }}"
-                                                data-nama="{{ $member->name }}"
-                                                data-paket="{{ $sub?->plan?->name }}"
-                                                data-planid="{{ $sub?->subscription_plan_id }}"
-                                                data-berakhir="{{ $sub?->end_date?->format('Y-m-d') }}"
-                                                data-aktif="{{ $masihBerlaku ? '1' : '0' }}">
-                                            {{ $sub ? 'Perpanjang' : 'Mulai paket' }}
-                                        </button>
-                                    @endif
-
-                                    <form method="POST"
-                                          action="{{ route('parkir.pelanggan.reset', $member) }}"
-                                          data-confirm="Reset kata sandi {{ $member->name }} menjadi 123456789? Kata sandi lamanya tidak berlaku lagi.">
-                                        @csrf
-                                        <button type="submit" class="link l-key">Reset sandi</button>
-                                    </form>
-
-                                    <form method="POST"
-                                          action="{{ route('parkir.pelanggan.status', $member) }}"
-                                          data-confirm="{{ $member->is_active ? 'Nonaktifkan' : 'Aktifkan kembali' }} {{ $member->name }}?">
-                                        @csrf
-                                        @method('PATCH')
-                                        <button type="submit" class="link l-warn">
-                                            {{ $member->is_active ? 'Nonaktifkan' : 'Aktifkan' }}
-                                        </button>
-                                    </form>
-
-                                    {{-- Pelanggan yang punya riwayat langganan tidak boleh dihapus, cukup dinonaktifkan --}}
-                                    @unless ($member->latestSubscription)
-                                        <form method="POST"
-                                              action="{{ route('parkir.pelanggan.destroy', $member) }}"
-                                              data-confirm="Hapus {{ $member->name }} beserta kendaraan dan foto wajahnya? Tindakan ini tidak bisa dibatalkan.">
-                                            @csrf
-                                            @method('DELETE')
-                                            <button type="submit" class="link l-del">Hapus</button>
-                                        </form>
-                                    @endunless
+                                    <button type="button"
+                                            class="btn btn-sm {{ $mendesak ? 'btn-primary' : 'btn-outline' }}"
+                                            data-aksi="{{ json_encode($aksi, JSON_UNESCAPED_UNICODE) }}"
+                                            aria-haspopup="menu" aria-expanded="false"
+                                            @if ($mendesak) title="Langganan perlu diperpanjang" @endif>
+                                        Aksi &#9662;
+                                    </button>
                                 </div>
                             </td>
                         </tr>
@@ -260,6 +252,15 @@
         @endif
     </div>
 
+    {{-- MENU AKSI (satu menu bersama, diisi dan diposisikan oleh JS) --}}
+    <div id="menu-aksi" class="aksi-list" role="menu" hidden></div>
+
+    {{-- Form umum untuk Reset sandi / Aktif-Nonaktif / Hapus (action & method diisi oleh JS) --}}
+    <form id="form-aksi" method="POST" style="display:none">
+        @csrf
+        <input type="hidden" name="_method" value="PATCH" disabled>
+    </form>
+
     {{-- POPUP PERPANJANG / MULAI PAKET --}}
     <dialog id="dlg-perpanjang" class="dlg">
         <form method="POST" id="form-perpanjang">
@@ -297,17 +298,13 @@
     </dialog>
 
     <script>
-        // Konfirmasi sebelum form yang punya atribut data-confirm dikirim
-        document.addEventListener('submit', function (e) {
-            const msg = e.target.dataset.confirm;
-            if (msg && !confirm(msg)) e.preventDefault();
-        });
-
-        // Popup perpanjang / mulai paket
         (function () {
-            const dlg = document.getElementById('dlg-perpanjang');
-            if (!dlg) return;
+            const menu = document.getElementById('menu-aksi');
+            const formAksi = document.getElementById('form-aksi');
+            const inputMetode = formAksi.querySelector('[name="_method"]');
 
+            // ── Popup pembayaran / perpanjang langganan ──────────────────────
+            const dlg = document.getElementById('dlg-perpanjang');
             const form = document.getElementById('form-perpanjang');
             const pilih = document.getElementById('pilih-paket');
             const ringkas = document.getElementById('dlg-ringkas');
@@ -345,32 +342,151 @@
                 }
             }
 
-            document.querySelectorAll('[data-perpanjang]').forEach(function (tombol) {
-                tombol.addEventListener('click', function () {
-                    konteks = {
-                        aktif: tombol.dataset.aktif === '1',
-                        berakhir: tombol.dataset.berakhir || '',
-                    };
+            function bukaPopupBayar(d) {
+                const b = d.bayar;
+                konteks = { aktif: b.berlaku, berakhir: b.berakhir || '' };
 
-                    form.action = tombol.dataset.url;
-                    judul.textContent = tombol.dataset.paket ? 'Perpanjang paket' : 'Mulai paket';
-                    sub.textContent = tombol.dataset.nama +
-                        (tombol.dataset.paket ? ' · paket saat ini: ' + tombol.dataset.paket : ' · belum berlangganan');
+                form.action = b.url;
+                judul.textContent = b.punyaPaket ? 'Perpanjang langganan' : 'Mulai langganan';
+                sub.textContent = d.nama +
+                    (b.paket ? ' · paket saat ini: ' + b.paket : ' · belum berlangganan');
 
-                    if (pilih) {
-                        // Pilih paket yang sama dengan paket sekarang sebagai bawaan
-                        if (tombol.dataset.planid) pilih.value = tombol.dataset.planid;
-                        if (pilih.selectedIndex < 0) pilih.selectedIndex = 0;
-                    }
+                if (pilih) {
+                    // Pilih paket yang sama dengan paket sekarang sebagai bawaan
+                    if (b.planId) pilih.value = b.planId;
+                    if (pilih.selectedIndex < 0) pilih.selectedIndex = 0;
+                }
 
-                    hitung();
-                    dlg.showModal();
-                });
-            });
+                hitung();
+                dlg.showModal();
+            }
 
             if (pilih) pilih.addEventListener('change', hitung);
             dlg.querySelectorAll('[data-tutup]').forEach(b => b.addEventListener('click', () => dlg.close()));
+
+            // ── Menu Aksi ────────────────────────────────────────────────────
+            let pemicu = null;
+
+            function tutupMenu() {
+                if (!pemicu) return;
+                menu.hidden = true;
+                pemicu.setAttribute('aria-expanded', 'false');
+                pemicu = null;
+            }
+
+            // Reset sandi / Aktif-Nonaktif / Hapus dikirim lewat satu form umum
+            function kirimAksi(url, metode, konfirmasi) {
+                if (konfirmasi && !confirm(konfirmasi)) return;
+                formAksi.action = url;
+                inputMetode.value = metode;
+                inputMetode.disabled = (metode === 'POST');
+                formAksi.submit();
+            }
+
+            function pemisah() {
+                const el = document.createElement('div');
+                el.className = 'aksi-sep';
+                return el;
+            }
+
+            function buatItem(teks, keterangan, aksi, opsi) {
+                opsi = opsi || {};
+                const el = document.createElement('button');
+                el.type = 'button';
+                el.setAttribute('role', 'menuitem');
+                el.className = 'aksi-item' + (opsi.bahaya ? ' bahaya' : '') + (opsi.mati ? ' mati' : '');
+
+                const t = document.createElement('span');
+                t.textContent = teks;
+                el.appendChild(t);
+
+                if (keterangan) {
+                    const k = document.createElement('small');
+                    k.textContent = keterangan;
+                    el.appendChild(k);
+                }
+
+                if (!opsi.mati) {
+                    el.addEventListener('click', function () {
+                        tutupMenu();
+                        aksi();
+                    });
+                }
+                return el;
+            }
+
+            function isiMenu(d) {
+                const isi = [];
+
+                if (d.bayar) {
+                    isi.push(buatItem('Pembayaran',
+                        d.bayar.punyaPaket ? 'Perpanjang langganan' : 'Mulai langganan',
+                        function () { bukaPopupBayar(d); }));
+                } else {
+                    isi.push(buatItem('Pembayaran', 'Aktifkan pelanggan dulu', null, { mati: true }));
+                }
+
+                isi.push(pemisah());
+
+                isi.push(buatItem('Reset sandi', null, function () {
+                    kirimAksi(d.reset, 'POST',
+                        'Reset kata sandi ' + d.nama + ' menjadi 123456789? Kata sandi lamanya tidak berlaku lagi.');
+                }));
+
+                isi.push(buatItem(d.aktif ? 'Nonaktifkan' : 'Aktifkan', null, function () {
+                    kirimAksi(d.status, 'PATCH',
+                        (d.aktif ? 'Nonaktifkan' : 'Aktifkan kembali') + ' ' + d.nama + '?');
+                }));
+
+                if (d.hapus) {
+                    isi.push(pemisah());
+                    isi.push(buatItem('Hapus pelanggan', null, function () {
+                        kirimAksi(d.hapus, 'DELETE',
+                            'Hapus ' + d.nama + ' beserta kendaraan dan foto wajahnya? Tindakan ini tidak bisa dibatalkan.');
+                    }, { bahaya: true }));
+                }
+
+                return isi;
+            }
+
+            function bukaMenu(tombol) {
+                const d = JSON.parse(tombol.dataset.aksi);
+                menu.replaceChildren.apply(menu, isiMenu(d));
+                menu.hidden = false;
+
+                // Sejajarkan sisi kanan menu dengan tombol; balik ke atas kalau mepet bawah layar
+                const r = tombol.getBoundingClientRect();
+                const mw = menu.offsetWidth;
+                const mh = menu.offsetHeight;
+                const kiri = Math.min(Math.max(8, r.right - mw), window.innerWidth - mw - 8);
+                let atas = r.bottom + 6;
+                if (atas + mh > window.innerHeight - 8) atas = Math.max(8, r.top - mh - 6);
+
+                menu.style.left = kiri + 'px';
+                menu.style.top = atas + 'px';
+
+                pemicu = tombol;
+                tombol.setAttribute('aria-expanded', 'true');
+            }
+
+            document.querySelectorAll('[data-aksi]').forEach(function (tombol) {
+                tombol.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    if (pemicu === tombol) { tutupMenu(); return; }
+                    tutupMenu();
+                    bukaMenu(tombol);
+                });
+            });
+
+            document.addEventListener('click', function (e) {
+                if (pemicu && !menu.contains(e.target)) tutupMenu();
+            });
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') tutupMenu();
+            });
+            window.addEventListener('scroll', tutupMenu, true);
+            window.addEventListener('resize', tutupMenu);
         })();
     </script>
 
-@endsection
+@endsection 
