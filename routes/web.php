@@ -11,6 +11,8 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SuperAdmin\AdminAccountController;
 use App\Http\Controllers\adminParkir\PaketController;
 use App\Http\Controllers\adminParkir\KameraController;
+use App\Http\Controllers\adminParkir\RekeningController;
+use App\Http\Controllers\adminParkir\PembayaranController;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Support\Facades\Route;
@@ -77,6 +79,15 @@ Route::middleware(['auth', 'role:admin_parkir'])
         Route::patch('/paket/{plan}/status', [PaketController::class, 'toggle'])->name('paket.toggle');
         Route::delete('/paket/{plan}', [PaketController::class, 'destroy'])->name('paket.destroy');
          Route::post('/pelanggan/{member}/perpanjang', [PelangganController::class, 'perpanjang'])->name('pelanggan.perpanjang');
+         Route::get('/rekening', [RekeningController::class, 'index'])->name('rekening.index');
+        Route::post('/rekening', [RekeningController::class, 'store'])->name('rekening.store');
+        Route::put('/rekening/{account}', [RekeningController::class, 'update'])->name('rekening.update');
+        Route::patch('/rekening/{account}/status', [RekeningController::class, 'toggle'])->name('rekening.toggle');
+        Route::delete('/rekening/{account}', [RekeningController::class, 'destroy'])->name('rekening.destroy');
+        Route::get('/pembayaran', [PembayaranController::class, 'index'])->name('pembayaran.index');
+Route::get('/pembayaran/{payment}/bukti', [PembayaranController::class, 'proof'])->name('pembayaran.bukti');
+Route::post('/pembayaran/{payment}/setujui', [PembayaranController::class, 'approve'])->name('pembayaran.approve');
+Route::post('/pembayaran/{payment}/tolak', [PembayaranController::class, 'reject'])->name('pembayaran.reject');
 
         // Akses gerbang / deteksi plat
         Route::get('/test-access', function () {

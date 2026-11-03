@@ -95,10 +95,21 @@
             <div class="label">Monitoring</div>
             <a href="{{ route('parkir.slot') }}" class="{{ request()->routeIs('parkir.slot*') ? 'active' : '' }}">Slot Parkir</a>
             <a href="{{ route('parkir.darurat') }}" class="{{ request()->routeIs('parkir.darurat') ? 'active' : '' }}">Buka Pintu Darurat</a>
-            <a href="{{ route('parkir.kamera') }}" class="{{ request()->routeIs('parkir.kamera') ? 'active' : '' }}">Kamera Deteksi</a>
+            {{-- Tampil otomatis begitu rutenya dibuat; sebelum itu disembunyikan supaya halaman lain tidak error --}}
+            @if (Route::has('parkir.kamera'))
+                <a href="{{ route('parkir.kamera') }}" class="{{ request()->routeIs('parkir.kamera') ? 'active' : '' }}">Kamera Deteksi</a>
+            @endif
             {{-- <a href="{{ route('parkir.logs.index') }}">Log Akses</a> --}}
             {{-- <a href="{{ route('parkir.alerts.index') }}">Security Alert</a> --}}
             {{-- <a href="{{ route('parkir.gate.index') }}">Kontrol Palang</a> --}}
+
+            <div class="label">Keuangan</div>
+            @if (Route::has('parkir.pembayaran.index'))
+                <a href="{{ route('parkir.pembayaran.index') }}" class="{{ request()->routeIs('parkir.pembayaran.*') ? 'active' : '' }}">Verifikasi Pembayaran</a>
+            @endif
+            @if (Route::has('parkir.rekening.index'))
+                <a href="{{ route('parkir.rekening.index') }}" class="{{ request()->routeIs('parkir.rekening.*') ? 'active' : '' }}">Rekening &amp; QRIS</a>
+            @endif
         </nav>
 
         <div class="user">
