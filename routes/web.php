@@ -13,6 +13,7 @@ use App\Http\Controllers\adminParkir\PaketController;
 use App\Http\Controllers\adminParkir\KameraController;
 use App\Http\Controllers\adminParkir\RekeningController;
 use App\Http\Controllers\adminParkir\PembayaranController;
+use App\Http\Controllers\adminParkir\PetugasController;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
 use Illuminate\Support\Facades\Route;
@@ -68,6 +69,9 @@ Route::middleware(['auth', 'role:admin_parkir'])
         Route::delete('/pelanggan/{member}', [PelangganController::class, 'destroy'])->name('pelanggan.destroy');
         Route::get('/darurat', [DaruratController::class, 'index'])->name('darurat');
         Route::post('/darurat/buka', [DaruratController::class, 'open'])->name('darurat.open');
+        Route::get('/darurat', [DaruratController::class, 'index'])->name('darurat');
+        Route::post('/darurat/buka', [DaruratController::class, 'open'])->name('darurat.open');
+        Route::post('/darurat/tutup', [DaruratController::class, 'close'])->name('darurat.close');  
         Route::get('/slot', [SlotController::class, 'index'])->name('slot');
         Route::put('/slot', [SlotController::class, 'update'])->name('slot.update');
         Route::get('/paket', [PaketController::class, 'index'])->name('paket.index');
@@ -85,9 +89,15 @@ Route::middleware(['auth', 'role:admin_parkir'])
         Route::patch('/rekening/{account}/status', [RekeningController::class, 'toggle'])->name('rekening.toggle');
         Route::delete('/rekening/{account}', [RekeningController::class, 'destroy'])->name('rekening.destroy');
         Route::get('/pembayaran', [PembayaranController::class, 'index'])->name('pembayaran.index');
-Route::get('/pembayaran/{payment}/bukti', [PembayaranController::class, 'proof'])->name('pembayaran.bukti');
-Route::post('/pembayaran/{payment}/setujui', [PembayaranController::class, 'approve'])->name('pembayaran.approve');
-Route::post('/pembayaran/{payment}/tolak', [PembayaranController::class, 'reject'])->name('pembayaran.reject');
+        Route::get('/pembayaran/{payment}/bukti', [PembayaranController::class, 'proof'])->name('pembayaran.bukti');
+        Route::post('/pembayaran/{payment}/setujui', [PembayaranController::class, 'approve'])->name('pembayaran.approve');
+        Route::post('/pembayaran/{payment}/tolak', [PembayaranController::class, 'reject'])->name('pembayaran.reject');
+        Route::get('/petugas', [PetugasController::class, 'index'])->name('petugas.index');
+        Route::post('/petugas', [PetugasController::class, 'store'])->name('petugas.store');
+        Route::put('/petugas/{contact}', [PetugasController::class, 'update'])->name('petugas.update');
+        Route::patch('/petugas/{contact}/status', [PetugasController::class, 'toggle'])->name('petugas.toggle');
+        Route::delete('/petugas/{contact}', [PetugasController::class, 'destroy'])->name('petugas.destroy');
+
 
         // Akses gerbang / deteksi plat
         Route::get('/test-access', function () {

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Masuk · ParkVisi</title>
+    <title>Masuk · Parkir.in</title>
     <style>
         :root{
             --navy:#0b1f33; --navy-2:#12304d; --teal:#14c8a8; --teal-dark:#0e9f86;
@@ -98,7 +98,7 @@
 
     {{-- ========== Panel kiri ========== --}}
     <aside class="lg-hero">
-        <div class="lg-brand"><div class="lg-logo">P</div> ParkVisi</div>
+        <div class="lg-brand"><div class="lg-logo">P</div> Parkir.in</div>
 
         <div class="lg-copy">
             <h1>Parkir cerdas dengan verifikasi wajah dan plat nomor.</h1>
@@ -111,13 +111,13 @@
             </ul>
         </div>
 
-        <div class="lg-foot">&copy; {{ date('Y') }} ParkVisi</div>
+        <div class="lg-foot">&copy; {{ date('Y') }} Parkir.in</div>
     </aside>
 
     {{-- ========== Panel kanan ========== --}}
     <main class="lg-form-wrap">
         <div class="lg-box">
-            <div class="lg-mobile-brand"><div class="lg-logo">P</div> ParkVisi</div>
+            <div class="lg-mobile-brand"><div class="lg-logo">P</div> Parkir.in</div>
 
             <h2>Selamat datang</h2>
             <p>Masuk untuk membuka panel pengelolaan.</p>

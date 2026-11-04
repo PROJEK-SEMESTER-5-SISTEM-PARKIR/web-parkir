@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\NotifikasiController;
 use App\Http\Controllers\Api\ProfilController;
 use App\Http\Controllers\Api\VerifikasiAksesController;
 use App\Http\Middleware\EnsureMemberCanAccess;
+use App\Http\Controllers\Api\PanggilPetugasController;
 
 // ===== Gerbang parkir (IoT) - punyamu, tidak diubah =====
 Route::post('/parking/trigger',[ParkingGateController::class,'trigger']);
@@ -41,7 +42,9 @@ Route::middleware(['auth:sanctum', EnsureMemberCanAccess::class])->group(functio
     Route::post('/notifikasi/{id}/respon', [NotifikasiController::class, 'respond'])->whereNumber('id');
     Route::post('/notifikasi/{id}/buzzer', [NotifikasiController::class, 'buzzer'])->whereNumber('id');
     Route::get('/profil', [ProfilController::class, 'show']);
-     Route::get('/profil/foto', [ProfilController::class, 'foto']);
+    Route::get('/profil/foto', [ProfilController::class, 'foto']);
 
-    // nanti: /riwayat, /alerts, /alerts/{id}/konfirmasi, /panggil-petugas
+    // Panggil petugas: WAJIB di dalam grup auth supaya $request->user() terisi
+    Route::post('/panggil-petugas', [PanggilPetugasController::class, 'store'])->middleware('throttle:5,1');
+    Route::delete('/panggil-petugas', [PanggilPetugasController::class, 'destroy']);
 });

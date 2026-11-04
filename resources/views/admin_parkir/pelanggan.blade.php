@@ -8,24 +8,39 @@
 
     <style>
         .btn-sm{padding:5px 12px;font-size:12.5px;white-space:nowrap}
-        .dlg{border:0;border-radius:16px;padding:22px;width:min(440px,92vw);box-shadow:0 20px 50px rgba(11,31,51,.3)}
-        .dlg::backdrop{background:rgba(11,31,51,.55)}
-        .dlg h3{margin:0 0 4px;font-size:18px}
-        .dlg .sub{margin:0 0 16px;color:var(--muted);font-size:14px}
-        .ringkas{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.7}
-        .ringkas .catatan{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.5}
         .aksi-list{position:fixed;z-index:50;min-width:220px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 30px rgba(11,31,51,.18);padding:6px}
         .aksi-list[hidden]{display:none}
         .aksi-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;padding:9px 12px;border:0;background:none;font:inherit;font-size:14px;text-align:left;border-radius:8px;cursor:pointer;color:var(--text)}
         .aksi-item:hover{background:var(--bg)}
         .aksi-item small{font-size:12px;color:var(--muted)}
         .aksi-item.bahaya{color:var(--red)}
-        .aksi-item.mati{opacity:.5;cursor:not-allowed}
-        .aksi-item.mati:hover{background:none}
         .aksi-sep{height:1px;background:var(--line);margin:6px 4px}
+
+        /* Styling Custom Modal Konfirmasi Modern */
+        .pl-modal-backdrop {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px);
+            display: flex; align-items: center; justify-content: center; z-index: 9999;
+            opacity: 0; visibility: hidden; transition: all 0.25s ease;
+        }
+        .pl-modal-backdrop.show { opacity: 1; visibility: visible; }
+        .pl-modal-box {
+            background: #fff; width: 100%; max-width: 420px; border-radius: 16px;
+            padding: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            transform: scale(0.95); transition: transform 0.25s ease;
+        }
+        .pl-modal-backdrop.show .pl-modal-box { transform: scale(1); }
+        .pl-modal-title { font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        .pl-modal-desc { font-size: 14px; color: var(--muted); line-height: 1.5; margin-bottom: 20px; }
+        .pl-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        .pl-modal-actions button { padding: 8px 16px; border-radius: 9px; font-weight: 600; font-size: 13.5px; cursor: pointer; border: 0; }
+        .btn-cancel { background: #f1f5f9; color: #475569; }
+        .btn-cancel:hover { background: #e2e8f0; }
+        .btn-confirm-action { background: var(--accent); color: #fff; }
+        .btn-confirm-action.bahaya { background: var(--red); }
     </style>
 
-    {{-- HASIL RESET KATA SANDI (tampil sekali setelah admin menekan tombol reset) --}}
+    {{-- HASIL RESET KATA SANDI --}}
     @if (session('reset'))
         @php $r = session('reset'); @endphp
         <div class="card" style="margin-bottom:16px;background:#effaf5;border-color:#bfe8d4" role="status">
@@ -57,7 +72,6 @@
     </div>
 
     <div class="card">
-
         {{-- TOOLBAR: cari + filter + tombol tambah --}}
         <div class="toolbar">
             <form method="GET" action="{{ route('parkir.pelanggan') }}" class="filters">
@@ -84,7 +98,6 @@
                         <th>Pelanggan</th>
                         <th>Kontak</th>
                         <th>Kendaraan</th>
-                        <th>Paket</th>
                         <th>Wajah</th>
                         <th>Status</th>
                         <th>Terdaftar</th>
@@ -94,7 +107,6 @@
                 <tbody>
                     @forelse ($members as $member)
                         <tr>
-                            {{-- Nama + foto (foto disajikan lewat route privat, bukan /storage) --}}
                             <td>
                                 <div style="display:flex;align-items:center;gap:12px">
                                     @if ($member->faceProfile && $member->faceProfile->photo_path)
@@ -114,13 +126,11 @@
                                 </div>
                             </td>
 
-                            {{-- Kontak --}}
                             <td>
                                 <div>{{ $member->phone ?: '-' }}</div>
                                 <div style="font-size:12px;color:var(--muted)">{{ $member->email ?: '-' }}</div>
                             </td>
 
-                            {{-- Kendaraan (bisa lebih dari satu) --}}
                             <td>
                                 @forelse ($member->vehicles as $vehicle)
                                     <div style="margin-bottom:4px">
@@ -132,31 +142,6 @@
                                 @endforelse
                             </td>
 
-                            {{-- Paket langganan terbaru --}}
-                            <td>
-                                @php $sub = $member->latestSubscription; @endphp
-                                @if ($sub)
-                                    <div style="font-weight:600;margin-bottom:4px">{{ $sub->plan?->name ?? '-' }}</div>
-                                    @if ($sub->isActive())
-                                        <span class="badge b-on">Aktif</span>
-                                        <div style="font-size:12px;color:var(--muted);margin-top:4px">
-                                            s.d. {{ $sub->end_date->format('d M Y') }}
-                                            · sisa {{ (int) now()->startOfDay()->diffInDays($sub->end_date) }} hari
-                                        </div>
-                                    @elseif ($sub->end_date->lt(now()->startOfDay()))
-                                        <span class="badge b-off">Kedaluwarsa</span>
-                                        <div style="font-size:12px;color:var(--muted);margin-top:4px">
-                                            berakhir {{ $sub->end_date->format('d M Y') }}
-                                        </div>
-                                    @else
-                                        <span class="badge b-off">{{ ucfirst($sub->status) }}</span>
-                                    @endif
-                                @else
-                                    <span style="color:var(--muted)">Belum berlangganan</span>
-                                @endif
-                            </td>
-
-                            {{-- Status wajah --}}
                             <td>
                                 @if ($member->faceProfile)
                                     <span class="badge b-on">Terdaftar</span>
@@ -165,7 +150,6 @@
                                 @endif
                             </td>
 
-                            {{-- Status member --}}
                             <td>
                                 @if ($member->is_active)
                                     <span class="badge b-on">Aktif</span>
@@ -178,37 +162,21 @@
                                 {{ $member->created_at?->format('d M Y') }}
                             </td>
 
-                            {{-- Aksi: satu tombol, semua pilihan ada di menu (lihat JS di bawah) --}}
                             <td>
                                 @php
-                                    $masihBerlaku = $sub && $sub->status === 'active' && $sub->end_date->gte(now()->startOfDay());
-                                    // tombol menonjol (biru) kalau belum punya paket, sudah habis, atau tinggal <= 7 hari
-                                    $mendesak = $member->is_active && (! $sub || $sub->end_date->lte(now()->startOfDay()->addDays(7)));
-
                                     $aksi = [
                                         'nama'   => $member->name,
                                         'aktif'  => (bool) $member->is_active,
-                                        // Pembayaran / perpanjang: hanya untuk pelanggan aktif, boleh kapan saja
-                                        'bayar'  => $member->is_active ? [
-                                            'url'        => route('parkir.pelanggan.perpanjang', $member),
-                                            'paket'      => $sub?->plan?->name,
-                                            'planId'     => $sub?->subscription_plan_id,
-                                            'berakhir'   => $sub?->end_date?->format('Y-m-d'),
-                                            'berlaku'    => (bool) $masihBerlaku,
-                                            'punyaPaket' => (bool) $sub,
-                                        ] : null,
                                         'reset'  => route('parkir.pelanggan.reset', $member),
                                         'status' => route('parkir.pelanggan.status', $member),
-                                        // Pelanggan yang punya riwayat langganan tidak boleh dihapus, cukup dinonaktifkan
                                         'hapus'  => $member->latestSubscription ? null : route('parkir.pelanggan.destroy', $member),
                                     ];
                                 @endphp
                                 <div class="actions">
                                     <button type="button"
-                                            class="btn btn-sm {{ $mendesak ? 'btn-primary' : 'btn-outline' }}"
+                                            class="btn btn-sm btn-outline"
                                             data-aksi="{{ json_encode($aksi, JSON_UNESCAPED_UNICODE) }}"
-                                            aria-haspopup="menu" aria-expanded="false"
-                                            @if ($mendesak) title="Langganan perlu diperpanjang" @endif>
+                                            aria-haspopup="menu" aria-expanded="false">
                                         Aksi &#9662;
                                     </button>
                                 </div>
@@ -216,7 +184,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="8" class="empty">
+                            <td colspan="7" class="empty">
                                 @if ($search !== '' || $status !== '')
                                     Tidak ada pelanggan yang cocok dengan pencarian.
                                 @else
@@ -229,7 +197,7 @@
             </table>
         </div>
 
-        {{-- PAGINATION (dibuat manual karena layout ini tidak pakai Tailwind) --}}
+        {{-- PAGINATION --}}
         @if ($members->hasPages())
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;font-size:13px;color:var(--muted)">
                 <span>
@@ -252,50 +220,31 @@
         @endif
     </div>
 
-    {{-- MENU AKSI (satu menu bersama, diisi dan diposisikan oleh JS) --}}
+    {{-- MENU AKSI --}}
     <div id="menu-aksi" class="aksi-list" role="menu" hidden></div>
 
-    {{-- Form umum untuk Reset sandi / Aktif-Nonaktif / Hapus (action & method diisi oleh JS) --}}
+    {{-- Form umum untuk Reset sandi / Aktif-Nonaktif / Hapus --}}
     <form id="form-aksi" method="POST" style="display:none">
         @csrf
         <input type="hidden" name="_method" value="PATCH" disabled>
     </form>
 
-    {{-- POPUP PERPANJANG / MULAI PAKET --}}
-    <dialog id="dlg-perpanjang" class="dlg">
-        <form method="POST" id="form-perpanjang">
-            @csrf
-            <h3 id="dlg-judul">Perpanjang paket</h3>
-            <p class="sub" id="dlg-sub"></p>
-
-            @if ($paket->isEmpty())
-                <div class="alert alert-err">
-                    Belum ada paket aktif. Buat dulu di menu Paket &amp; Harga.
-                </div>
-                <div style="display:flex;justify-content:flex-end;margin-top:18px">
-                    <button type="button" class="btn btn-outline" data-tutup>Tutup</button>
-                </div>
-            @else
-                <div class="field">
-                    <label for="pilih-paket">Paket</label>
-                    <select id="pilih-paket" name="subscription_plan_id" required>
-                        @foreach ($paket as $p)
-                            <option value="{{ $p->id }}" data-hari="{{ $p->duration_days }}">
-                                {{ $p->name }} · {{ $p->duration_label }}
-                            </option>
-                        @endforeach
-                    </select>
-                </div>
-
-                <div class="ringkas" id="dlg-ringkas"></div>
-
-                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
-                    <button type="button" class="btn btn-outline" data-tutup>Batal</button>
-                    <button type="submit" class="btn btn-primary">Simpan</button>
-                </div>
-            @endif
-        </form>
-    </dialog>
+    {{-- ===== CUSTOM MODAL KONFIRMASI MODERN ===== --}}
+    <div id="customModal" class="pl-modal-backdrop">
+        <div class="pl-modal-box">
+            <div class="pl-modal-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span id="modalHeading">Konfirmasi Tindakan</span>
+            </div>
+            <div class="pl-modal-desc" id="modalMessage">
+                Apakah Anda yakin ingin melanjutkan tindakan ini?
+            </div>
+            <div class="pl-modal-actions">
+                <button type="button" class="btn-cancel" onclick="closeCustomModal()">Batal</button>
+                <button type="button" id="modalConfirmBtn" class="btn-confirm-action" onclick="submitActiveAction()">Ya, Lanjutkan</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         (function () {
@@ -303,69 +252,8 @@
             const formAksi = document.getElementById('form-aksi');
             const inputMetode = formAksi.querySelector('[name="_method"]');
 
-            // ── Popup pembayaran / perpanjang langganan ──────────────────────
-            const dlg = document.getElementById('dlg-perpanjang');
-            const form = document.getElementById('form-perpanjang');
-            const pilih = document.getElementById('pilih-paket');
-            const ringkas = document.getElementById('dlg-ringkas');
-            const judul = document.getElementById('dlg-judul');
-            const sub = document.getElementById('dlg-sub');
-            const bulan = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
-            const fmt = d => d.getDate() + ' ' + bulan[d.getMonth()] + ' ' + d.getFullYear();
-            let konteks = null;
-
-            // Pratinjau tanggal. Aturannya sama dengan yang dipakai server.
-            function hitung() {
-                if (!konteks || !pilih || pilih.selectedIndex < 0) return;
-
-                const hari = parseInt(pilih.options[pilih.selectedIndex].dataset.hari, 10);
-                const hariIni = new Date();
-                hariIni.setHours(0, 0, 0, 0);
-
-                if (konteks.aktif && konteks.berakhir) {
-                    const lama = new Date(konteks.berakhir + 'T00:00:00');
-                    const baru = new Date(lama);
-                    baru.setDate(baru.getDate() + hari);
-                    ringkas.innerHTML =
-                        '<div>Berakhir sekarang: <b>' + fmt(lama) + '</b></div>' +
-                        '<div>Berakhir setelah diperpanjang: <b>' + fmt(baru) + '</b></div>' +
-                        '<div class="catatan">Disambung dari tanggal berakhir saat ini, sisa hari tidak hangus.</div>';
-                } else {
-                    const baru = new Date(hariIni);
-                    baru.setDate(baru.getDate() + hari);
-                    ringkas.innerHTML =
-                        '<div>Mulai: <b>' + fmt(hariIni) + '</b></div>' +
-                        '<div>Berlaku sampai: <b>' + fmt(baru) + '</b></div>' +
-                        '<div class="catatan">' + (konteks.berakhir
-                            ? 'Paket sebelumnya sudah habis, masa berlaku baru dihitung mulai hari ini.'
-                            : 'Pelanggan belum punya paket, masa berlaku dihitung mulai hari ini.') + '</div>';
-                }
-            }
-
-            function bukaPopupBayar(d) {
-                const b = d.bayar;
-                konteks = { aktif: b.berlaku, berakhir: b.berakhir || '' };
-
-                form.action = b.url;
-                judul.textContent = b.punyaPaket ? 'Perpanjang langganan' : 'Mulai langganan';
-                sub.textContent = d.nama +
-                    (b.paket ? ' · paket saat ini: ' + b.paket : ' · belum berlangganan');
-
-                if (pilih) {
-                    // Pilih paket yang sama dengan paket sekarang sebagai bawaan
-                    if (b.planId) pilih.value = b.planId;
-                    if (pilih.selectedIndex < 0) pilih.selectedIndex = 0;
-                }
-
-                hitung();
-                dlg.showModal();
-            }
-
-            if (pilih) pilih.addEventListener('change', hitung);
-            dlg.querySelectorAll('[data-tutup]').forEach(b => b.addEventListener('click', () => dlg.close()));
-
-            // ── Menu Aksi ────────────────────────────────────────────────────
             let pemicu = null;
+            let pendingAction = null;
 
             function tutupMenu() {
                 if (!pemicu) return;
@@ -374,14 +262,33 @@
                 pemicu = null;
             }
 
-            // Reset sandi / Aktif-Nonaktif / Hapus dikirim lewat satu form umum
-            function kirimAksi(url, metode, konfirmasi) {
-                if (konfirmasi && !confirm(konfirmasi)) return;
-                formAksi.action = url;
-                inputMetode.value = metode;
-                inputMetode.disabled = (metode === 'POST');
-                formAksi.submit();
-            }
+            // Fungsi pemicu modal modern pengganti confirm()
+            window.showConfirmModal = function(url, metode, pesan, isBahaya) {
+                const modal = document.getElementById('customModal');
+                const msgEl = document.getElementById('modalMessage');
+                const confirmBtn = document.getElementById('modalConfirmBtn');
+
+                msgEl.textContent = pesan;
+                confirmBtn.className = 'btn-confirm-action' + (isBahaya ? ' bahaya' : '');
+                confirmBtn.innerText = isBahaya ? 'Hapus Pelanggan' : 'Ya, Lanjutkan';
+
+                pendingAction = { url, metode };
+                modal.classList.add('show');
+            };
+
+            window.closeCustomModal = function() {
+                document.getElementById('customModal').classList.remove('show');
+                pendingAction = null;
+            };
+
+            window.submitActiveAction = function() {
+                if (pendingAction) {
+                    formAksi.action = pendingAction.url;
+                    inputMetode.value = pendingAction.metode;
+                    inputMetode.disabled = (pendingAction.metode === 'POST');
+                    formAksi.submit();
+                }
+            };
 
             function pemisah() {
                 const el = document.createElement('div');
@@ -394,7 +301,7 @@
                 const el = document.createElement('button');
                 el.type = 'button';
                 el.setAttribute('role', 'menuitem');
-                el.className = 'aksi-item' + (opsi.bahaya ? ' bahaya' : '') + (opsi.mati ? ' mati' : '');
+                el.className = 'aksi-item' + (opsi.bahaya ? ' bahaya' : '');
 
                 const t = document.createElement('span');
                 t.textContent = teks;
@@ -406,43 +313,43 @@
                     el.appendChild(k);
                 }
 
-                if (!opsi.mati) {
-                    el.addEventListener('click', function () {
-                        tutupMenu();
-                        aksi();
-                    });
-                }
+                el.addEventListener('click', function () {
+                    tutupMenu();
+                    aksi();
+                });
                 return el;
             }
 
             function isiMenu(d) {
                 const isi = [];
 
-                if (d.bayar) {
-                    isi.push(buatItem('Pembayaran',
-                        d.bayar.punyaPaket ? 'Perpanjang langganan' : 'Mulai langganan',
-                        function () { bukaPopupBayar(d); }));
-                } else {
-                    isi.push(buatItem('Pembayaran', 'Aktifkan pelanggan dulu', null, { mati: true }));
-                }
-
-                isi.push(pemisah());
-
                 isi.push(buatItem('Reset sandi', null, function () {
-                    kirimAksi(d.reset, 'POST',
-                        'Reset kata sandi ' + d.nama + ' menjadi 123456789? Kata sandi lamanya tidak berlaku lagi.');
+                    showConfirmModal(
+                        d.reset, 
+                        'POST', 
+                        'Reset kata sandi ' + d.nama + ' menjadi 123456789? Kata sandi lamanya tidak berlaku lagi.',
+                        false
+                    );
                 }));
 
                 isi.push(buatItem(d.aktif ? 'Nonaktifkan' : 'Aktifkan', null, function () {
-                    kirimAksi(d.status, 'PATCH',
-                        (d.aktif ? 'Nonaktifkan' : 'Aktifkan kembali') + ' ' + d.nama + '?');
+                    showConfirmModal(
+                        d.status, 
+                        'PATCH', 
+                        (d.aktif ? 'Nonaktifkan' : 'Aktifkan kembali') + ' ' + d.nama + '?',
+                        false
+                    );
                 }));
 
                 if (d.hapus) {
                     isi.push(pemisah());
                     isi.push(buatItem('Hapus pelanggan', null, function () {
-                        kirimAksi(d.hapus, 'DELETE',
-                            'Hapus ' + d.nama + ' beserta kendaraan dan foto wajahnya? Tindakan ini tidak bisa dibatalkan.');
+                        showConfirmModal(
+                            d.hapus, 
+                            'DELETE', 
+                            'Hapus ' + d.nama + ' beserta kendaraan dan foto wajahnya? Tindakan ini tidak bisa dibatalkan.',
+                            true
+                        );
                     }, { bahaya: true }));
                 }
 
@@ -454,7 +361,6 @@
                 menu.replaceChildren.apply(menu, isiMenu(d));
                 menu.hidden = false;
 
-                // Sejajarkan sisi kanan menu dengan tombol; balik ke atas kalau mepet bawah layar
                 const r = tombol.getBoundingClientRect();
                 const mw = menu.offsetWidth;
                 const mh = menu.offsetHeight;
@@ -489,4 +395,4 @@
         })();
     </script>
 
-@endsection 
+@endsection

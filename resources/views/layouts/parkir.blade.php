@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield('title', 'Operasional Parkir') · ParkVisi</title>
+    <title>@yield('title', 'Operasional Parkir') · Parkir.in</title>
     <style>
         :root{
             --navy:#0b1f33; --navy-2:#12304d; --accent:#2f80ed;
@@ -18,6 +18,7 @@
         .sidebar{width:240px;background:var(--navy);color:#cfd9e6;display:flex;flex-direction:column;padding:20px 14px;position:sticky;top:0;height:100vh}
         .brand{font-size:20px;font-weight:700;color:#fff;padding:4px 10px 20px}
         .brand small{display:block;font-size:11px;font-weight:400;color:#8ea3ba;margin-top:2px}
+        .nav{overflow-y:auto;flex:1;min-height:0}
         .nav a{display:block;padding:10px 12px;border-radius:8px;color:#cfd9e6;text-decoration:none;font-size:14px;margin-bottom:2px}
         .nav a:hover{background:var(--navy-2);color:#fff}
         .nav a.active{background:var(--accent);color:#fff}
@@ -79,7 +80,7 @@
 </head>
 <body>
     <aside class="sidebar">
-        <div class="brand">ParkVisi<small>Operasional Parkir</small></div>
+        <div class="brand">Parkir.in<small>Operasional Parkir</small></div>
 
         <nav class="nav">
             <a href="{{ route('parkir.dashboard') }}" class="{{ request()->routeIs('parkir.dashboard') ? 'active' : '' }}">Dashboard</a>
@@ -110,6 +111,11 @@
             @if (Route::has('parkir.rekening.index'))
                 <a href="{{ route('parkir.rekening.index') }}" class="{{ request()->routeIs('parkir.rekening.*') ? 'active' : '' }}">Rekening &amp; QRIS</a>
             @endif
+
+            <div class="label">Pengaturan</div>
+            @if (Route::has('parkir.petugas.index'))
+                <a href="{{ route('parkir.petugas.index') }}" class="{{ request()->routeIs('parkir.petugas.*') ? 'active' : '' }}">Kontak Petugas</a>
+            @endif
         </nav>
 
         <div class="user">
@@ -131,7 +137,7 @@
         </div>
 
         @if (session('status') || session('success'))
-            <div class="alert alert-ok">{{ session('status') ?? session('success') }}</div>
+            <div class="alert alert-ok">{{ session('success') ?? session('status') }}</div>
         @endif
         @if (session('error'))
             <div class="alert alert-err">{{ session('error') }}</div>

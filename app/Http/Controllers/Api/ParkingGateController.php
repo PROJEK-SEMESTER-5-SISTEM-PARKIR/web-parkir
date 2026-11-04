@@ -10,6 +10,7 @@ use App\Models\ParkingGateState;
 use App\Models\ParkingSession;
 use App\Models\Vehicle;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;   // TAMBAHAN: untuk membaca flag buzzer panggil petugas
 
 class ParkingGateController extends Controller
 {
@@ -383,7 +384,11 @@ class ParkingGateController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $state,
+            // Semua field state tetap ada (izin, status, dst.), hanya ditambah 'buzzer'
+            // supaya ESP32 tahu kapan harus membunyikan buzzer panggil petugas.
+            'data' => array_merge($state->toArray(), [
+                'buzzer' => Cache::has(PanggilPetugasController::CACHE_KEY),
+            ]),
         ]);
     }
 

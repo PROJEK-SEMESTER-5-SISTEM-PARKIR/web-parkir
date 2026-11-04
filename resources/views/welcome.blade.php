@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ParkVisi — Parkir Tanpa Tiket, Cukup Wajah & Plat Nomor</title>
+<title>Parkir.in — Parkir Tanpa Tiket, Cukup Wajah & Plat Nomor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
@@ -172,7 +172,7 @@
   <div class="pv-wrap pv-nav">
     <a href="#" class="pv-brand">
       <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="8" fill="#00C2A8"/><path d="M9 20V8h5.2a4 4 0 010 8H9" stroke="#0B1D33" stroke-width="2.2" stroke-linecap="round"/></svg>
-      ParkVisi
+      Parkir.in
     </a>
     <ul class="pv-links" id="pvLinks">
       <li><a href="#cara-kerja">Cara Kerja</a></li>
@@ -189,7 +189,7 @@
   <div class="pv-wrap pv-hero-in">
     <span class="pv-eyebrow"><i></i> Sistem parkir berbasis pengenalan wajah &amp; plat nomor</span>
     <h1>Parkir Tanpa Tiket.<span>Cukup Wajah dan Plat Nomor Anda.</span></h1>
-    <p class="pv-lead">ParkVisi menggantikan tiket dan kartu member dengan pengenalan wajah dan plat nomor otomatis. Palang terbuka begitu Anda mendekat, tanpa berhenti, tanpa antre.</p>
+    <p class="pv-lead">Parkir.in menggantikan tiket dan kartu member dengan pengenalan wajah dan plat nomor otomatis. Palang terbuka begitu Anda mendekat, tanpa berhenti, tanpa antre.</p>
     <div class="pv-hero-act">
       <a href="#unduh" class="pv-btn pv-btn-primary">Daftarkan Kendaraan Saya →</a>
       <a href="#cara-kerja" class="pv-btn pv-btn-ghost">Lihat Cara Kerja</a>
@@ -208,7 +208,7 @@
       <div class="pv-step reveal">
         <div class="pv-num">01</div>
         <h3>Daftarkan wajah &amp; plat nomor</h3>
-        <p>Ambil foto wajah dan masukkan nomor plat kendaraan lewat aplikasi ParkVisi. Data tersimpan aman dan terenkripsi.</p>
+        <p>Ambil foto wajah dan masukkan nomor plat kendaraan lewat aplikasi Parkir.in. Data tersimpan aman dan terenkripsi.</p>
       </div>
       <div class="pv-step reveal">
         <div class="pv-num">02</div>
@@ -329,7 +329,7 @@
       </div>
       <div class="pv-cta-act">
         <a href="{{ route('login') }}" class="pv-btn pv-btn-primary">Coba Dashboard Admin</a>
-        <a href="#" class="pv-btn pv-btn-ghost">Unduh Aplikasi ParkVisi</a>
+        <a href="#" class="pv-btn pv-btn-ghost">Unduh Aplikasi Parkir.in</a>
       </div>
     </div>
   </div>
@@ -341,7 +341,7 @@
       <div>
         <a href="#" class="pv-brand" style="margin-bottom:14px">
           <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="8" fill="#00C2A8"/><path d="M9 20V8h5.2a4 4 0 010 8H9" stroke="#0B1D33" stroke-width="2.2" stroke-linecap="round"/></svg>
-          ParkVisi
+          Parkir.in
         </a>
         <p style="font-size:14.5px;max-width:280px;margin-top:12px">Sistem manajemen parkir komersial dengan pengenalan wajah dan plat nomor otomatis.</p>
       </div>
@@ -370,7 +370,7 @@
       </div>
     </div>
     <div class="pv-foot-b">
-      <span>© {{ date('Y') }} ParkVisi. Seluruh hak cipta dilindungi.</span>
+      <span>© {{ date('Y') }} Parkir.in. Seluruh hak cipta dilindungi.</span>
       <span>Dibuat dengan Laravel</span>
     </div>
   </div>

@@ -13,6 +13,20 @@
     .d-actions{display:flex;gap:8px;flex-wrap:wrap}
     .d-actions a{text-decoration:none}
 
+    /* Styling tambahan untuk jam real-time */
+    .d-realtime-clock {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 14px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 600;
+        background: #fff;
+        border: 1px solid var(--line);
+        color: var(--text);
+    }
+
     .d-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin-bottom:20px}
     .d-stat{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px 20px;display:flex;align-items:center;gap:14px}
     .d-ico{width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -58,12 +72,21 @@
     .d-slot-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted)}
 </style>
 
-{{-- ===== Status AI + aksi cepat ===== --}}
+{{-- ===== Status AI + Jam Real-time + Aksi Cepat ===== --}}
 <div class="d-bar">
-    <span class="d-pill" title="{{ $aiOnline ? 'Service Python merespons' : 'Service Python tidak merespons, gerbang tidak bisa memverifikasi' }}">
-        <span class="d-dot" style="background:{{ $aiOnline ? 'var(--green)' : 'var(--red)' }}"></span>
-        Layanan AI {{ $aiOnline ? 'online' : 'offline' }}
-    </span>
+    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <span class="d-pill" title="{{ $aiOnline ? 'Service Python merespons' : 'Service Python tidak merespons, gerbang tidak bisa memverifikasi' }}">
+            <span class="d-dot" style="background:{{ $aiOnline ? 'var(--green)' : 'var(--red)' }}"></span>
+            Layanan AI {{ $aiOnline ? 'online' : 'offline' }}
+        </span>
+        
+        {{-- Widget Jam Realtime Ditambahkan di Sini --}}
+        <div class="d-realtime-clock" id="realtime-clock">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted)"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span id="clock-text">Memuat waktu...</span>
+        </div>
+    </div>
+
     <div class="d-actions">
         <a href="{{ route('parkir.pendaftaran') }}" class="btn btn-primary">+ Daftarkan Pelanggan</a>
         <a href="{{ route('parkir.darurat') }}" class="btn btn-outline" style="color:var(--red);border-color:#f1c4c4">Pintu Darurat</a>
@@ -243,7 +266,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
                     </div>
                     <div class="d-main">
-                        <div class="d-name">{{ $sub->member?->name ?? '-' }}</div>
+                        <div class="d-name">{{ $sub->member?->name ?? '-' }}`</div>
                         <div class="d-meta">Paket {{ $sub->plan?->name ?? '-' }}</div>
                     </div>
                     <span class="d-tag d-warn">{{ $left === 0 ? 'Hari ini' : $left . ' hari' }}</span>
@@ -257,5 +280,32 @@
     </div>
 
 </div>
+
+{{-- Skrip JavaScript untuk menjalankan Jam Real-time --}}
+<script>
+    function updateClock() {
+        const now = new Date();
+        
+        // Format hari dan tanggal (Contoh: Kam, 5 Nov 2026)
+        const optionsDate = { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' };
+        const dateString = now.toLocaleDateString('id-ID', optionsDate);
+        
+        // Format jam, menit, detik (24 jam)
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+        
+        const timeString = `${hours}:${minutes}:${seconds} WIB`;
+        
+        // Tampilkan ke elemen HTML
+        document.getElementById('clock-text').innerText = `${dateString}, ${timeString}`;
+    }
+
+    // Jalankan saat pertama kali halaman dimuat
+    updateClock();
+    
+    // Perbarui setiap 1 detik
+    setInterval(updateClock, 1000);
+</script>
 
 @endsection
