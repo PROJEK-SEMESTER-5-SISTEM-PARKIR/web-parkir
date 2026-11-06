@@ -97,6 +97,8 @@ Route::middleware(['auth', 'role:admin_parkir'])
         Route::put('/petugas/{contact}', [PetugasController::class, 'update'])->name('petugas.update');
         Route::patch('/petugas/{contact}/status', [PetugasController::class, 'toggle'])->name('petugas.toggle');
         Route::delete('/petugas/{contact}', [PetugasController::class, 'destroy'])->name('petugas.destroy');
+        Route::post('/pelanggan/{member}/kendaraan', [PelangganController::class, 'tambahKendaraan'])
+        ->name('pelanggan.kendaraan');
 
 
         // Akses gerbang / deteksi plat

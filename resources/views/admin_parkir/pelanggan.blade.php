@@ -28,6 +28,7 @@
             background: #fff; width: 100%; max-width: 420px; border-radius: 16px;
             padding: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
             transform: scale(0.95); transition: transform 0.25s ease;
+            max-height: 92vh; overflow-y: auto;
         }
         .pl-modal-backdrop.show .pl-modal-box { transform: scale(1); }
         .pl-modal-title { font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
@@ -38,7 +39,28 @@
         .btn-cancel:hover { background: #e2e8f0; }
         .btn-confirm-action { background: var(--accent); color: #fff; }
         .btn-confirm-action.bahaya { background: var(--red); }
+
+        /* Popup Tambah kendaraan */
+        .kd-info{margin:0 0 16px;padding:10px 12px;border-radius:10px;background:#eef4ff;border:1px solid #cfdcf7;font-size:13px;color:#1d4a94;line-height:1.5}
+        .kd-info.netral{background:#f6f8fb;border-color:var(--line);color:var(--muted)}
+        .kd-sum{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:#f6f8fb;border:1px solid var(--line)}
+        .kd-sum small{display:block;font-size:12px;color:var(--muted);margin-bottom:2px}
+        .kd-sum b{font-size:20px}
+        .kd-sum span{display:block;margin-top:4px;font-size:12.5px;color:var(--muted)}
+        .kd-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+        @media (max-width:520px){.kd-row{grid-template-columns:1fr}}
     </style>
+
+    {{-- GALAT VALIDASI --}}
+    @if ($errors->any())
+        <div class="alert alert-err">
+            <ul style="margin:0;padding-left:18px">
+                @foreach ($errors->all() as $pesan)
+                    <li>{{ $pesan }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
 
     {{-- HASIL RESET KATA SANDI --}}
     @if (session('reset'))
@@ -169,7 +191,13 @@
                                         'aktif'  => (bool) $member->is_active,
                                         'reset'  => route('parkir.pelanggan.reset', $member),
                                         'status' => route('parkir.pelanggan.status', $member),
-                                        'hapus'  => $member->latestSubscription ? null : route('parkir.pelanggan.destroy', $member),
+                                        // Selalu tampilkan opsi hapus pelanggan di menu Aksi
+                                        'hapus'  => route('parkir.pelanggan.destroy', $member),
+                                        // Tambah kendaraan: baru muncul kalau rutenya sudah didaftarkan
+                                        'kendaraan' => Route::has('parkir.pelanggan.kendaraan')
+                                            ? route('parkir.pelanggan.kendaraan', $member)
+                                            : null,
+                                        'tagihan' => $tagihan[$member->id] ?? null,
                                     ];
                                 @endphp
                                 <div class="actions">
@@ -246,6 +274,59 @@
         </div>
     </div>
 
+    {{-- ===== POPUP TAMBAH KENDARAAN ===== --}}
+    <div id="kendaraanModal" class="pl-modal-backdrop">
+        <div class="pl-modal-box" style="max-width:460px">
+            <div class="pl-modal-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><rect x="3" y="8" width="18" height="8" rx="2"/><circle cx="7.5" cy="17" r="1.5"/><circle cx="16.5" cy="17" r="1.5"/></svg>
+                <span id="kdJudul">Tambah kendaraan</span>
+            </div>
+
+            <div class="kd-info" id="kdInfo"></div>
+
+            <form id="kdForm" method="POST">
+                @csrf
+
+                <div class="field">
+                    <label for="kdPlat">Plat nomor</label>
+                    <input id="kdPlat" name="plate" placeholder="B 1234 ABC" autocomplete="off" required style="text-transform:uppercase">
+                </div>
+
+                <div class="field">
+                    <label for="kdJenis">Jenis kendaraan</label>
+                    <select id="kdJenis" name="vehicle_type"></select>
+                </div>
+
+                <div id="kdBayar">
+                    <div class="kd-sum">
+                        <small>Tagihan prorata</small>
+                        <b id="kdTagihan">-</b>
+                        <span id="kdRincian"></span>
+                    </div>
+
+                    <div class="kd-row">
+                        <div class="field">
+                            <label for="kdMetode">Metode pembayaran</label>
+                            <select id="kdMetode" name="payment_method">
+                                <option value="tunai">Tunai</option>
+                                <option value="transfer">Transfer</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="kdNominal">Nominal dibayar (Rp)</label>
+                            <input id="kdNominal" type="number" name="amount_paid" min="0" step="1" inputmode="numeric">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pl-modal-actions" style="margin-top:6px">
+                    <button type="button" class="btn-cancel" onclick="tutupFormKendaraan()">Batal</button>
+                    <button type="submit" class="btn-confirm-action">Simpan kendaraan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         (function () {
             const menu = document.getElementById('menu-aksi');
@@ -290,6 +371,83 @@
                 }
             };
 
+            // ===== Popup Tambah kendaraan =====
+            const kdModal = document.getElementById('kendaraanModal');
+            const kdForm = document.getElementById('kdForm');
+            const kdJenis = document.getElementById('kdJenis');
+            const kdMetode = document.getElementById('kdMetode');
+            const kdNominal = document.getElementById('kdNominal');
+            const kdBayar = document.getElementById('kdBayar');
+            let kdData = null;
+
+            const rupiah = n => 'Rp ' + new Intl.NumberFormat('id-ID').format(n);
+            const huruf = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+            function hitungKendaraan() {
+                if (!kdData) return;
+                const t = kdData.tagihan;
+                const ada = t.status === 'aktif' || t.status === 'belum_mulai';
+                const harga = ada ? Number(t.harga[kdJenis.value] || 0) : 0;
+
+                // Tanpa biaya: kolom pembayaran disembunyikan dan tidak ikut terkirim
+                kdBayar.hidden = harga <= 0;
+                kdMetode.disabled = harga <= 0;
+                kdNominal.disabled = harga <= 0;
+
+                document.getElementById('kdTagihan').textContent = rupiah(harga);
+                document.getElementById('kdRincian').textContent =
+                    t.sisa_hari + ' hari tersisa sampai ' + t.sampai + ' (paket ' + t.paket + ')';
+                kdNominal.value = harga > 0 ? harga : '';
+            }
+
+            window.bukaFormKendaraan = function (d) {
+                kdData = d;
+                const t = d.tagihan;
+
+                document.getElementById('kdJjudul');
+                document.getElementById('kdJudul').textContent = 'Tambah kendaraan · ' + d.nama;
+                kdForm.action = d.kendaraan;
+                kdForm.reset();
+
+                // Pilihan jenis diambil dari daftar harga yang dikirim server
+                kdJenis.replaceChildren.apply(kdJenis, Object.keys(t.harga).map(function (j) {
+                    const o = document.createElement('option');
+                    o.value = j;
+                    o.textContent = huruf(j);
+                    return o;
+                }));
+
+                const info = document.getElementById('kdInfo');
+                info.classList.remove('netral');
+
+                if (t.status === 'aktif') {
+                    info.textContent = 'Langganan ' + t.paket + ' berlaku sampai ' + t.sampai +
+                        '. Kendaraan baru ditagih prorata untuk sisa ' + t.sisa_hari + ' hari.';
+                } else if (t.status === 'belum_mulai') {
+                    info.textContent = 'Langganan ' + t.paket + ' belum mulai (berakhir ' + t.sampai +
+                        '). Kendaraan baru ditagih untuk seluruh periodenya.';
+                } else if (t.status === 'habis') {
+                    info.classList.add('netral');
+                    info.textContent = 'Langganan sudah berakhir pada ' + t.sampai +
+                        '. Kendaraan dicatat tanpa biaya; biayanya ikut dihitung saat paket diperpanjang.';
+                } else {
+                    info.classList.add('netral');
+                    info.textContent = 'Pelanggan ini belum pernah berlangganan. Kendaraan dicatat tanpa biaya.';
+                }
+
+                hitungKendaraan();
+                kdModal.classList.add('show');
+                setTimeout(function () { document.getElementById('kdPlat').focus(); }, 50);
+            };
+
+            window.tutupFormKendaraan = function () {
+                kdModal.classList.remove('show');
+                kdData = null;
+            };
+
+            kdJenis.addEventListener('change', hitungKendaraan);
+            kdModal.addEventListener('click', function (e) { if (e.target === kdModal) tutupFormKendaraan(); });
+
             function pemisah() {
                 const el = document.createElement('div');
                 el.className = 'aksi-sep';
@@ -322,6 +480,13 @@
 
             function isiMenu(d) {
                 const isi = [];
+
+                if (d.aktif && d.kendaraan && d.tagihan) {
+                    isi.push(buatItem('Tambah kendaraan', 'Cukup plat, tanpa daftar ulang', function () {
+                        bukaFormKendaraan(d);
+                    }));
+                    isi.push(pemisah());
+                }
 
                 isi.push(buatItem('Reset sandi', null, function () {
                     showConfirmModal(
@@ -388,7 +553,7 @@
                 if (pemicu && !menu.contains(e.target)) tutupMenu();
             });
             document.addEventListener('keydown', function (e) {
-                if (e.key === 'Escape') tutupMenu();
+                if (e.key === 'Escape') { tutupMenu(); tutupFormKendaraan(); }
             });
             window.addEventListener('scroll', tutupMenu, true);
             window.addEventListener('resize', tutupMenu);
