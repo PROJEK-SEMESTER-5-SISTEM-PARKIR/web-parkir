@@ -364,7 +364,7 @@
             <section class="pd-panel">
                 <div class="pd-head">
                     <h3>Foto wajah</h3>
-                    <p>Kamera mengambil 30 foto yang wajahnya terdeteksi, untuk melatih pengenalan wajah di gerbang.</p>
+                    <p>Kamera mengambil 5 foto untuk memastikan wajah ini sudah dikenali sistem (salah satu dari wajah yang sudah dilatih).</p>
                 </div>
 
                 {{-- Peringatan: wajah sudah terdaftar, layanan error, dll. --}}
@@ -383,13 +383,13 @@
                             <circle cx="12" cy="9" r="3.6"/><path d="M4.5 20c.9-3.6 3.9-5.6 7.5-5.6s6.6 2 7.5 5.6"/>
                         </svg>
                         <strong>Belum ada foto</strong>
-                        <span>Buka kamera lalu mulai pengambilan 30 foto</span>
+                        <span>Buka kamera lalu mulai pengambilan 5 foto</span>
                     </div>
 
                     {{-- Kondisi kamera menyala --}}
                     <video class="pd-video" id="camVideo" autoplay playsinline muted></video>
                     <div class="pd-guide"><i></i><em id="guideText">Posisikan wajah di dalam bingkai</em></div>
-                    <div class="pd-count" id="countBadge">0/30</div>
+                    <div class="pd-count" id="countBadge">0/5</div>
 
                     {{-- Kondisi foto sudah ada (pratinjau frame tengah) --}}
                     <img class="pd-shot" id="shot" alt="Pratinjau foto wajah member">
@@ -403,21 +403,18 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>
                         Buka kamera
                     </button>
-                    <button type="button" class="pd-btn primary" id="btnSnap" hidden>Mulai ambil 30 foto</button>
+                    <button type="button" class="pd-btn primary" id="btnSnap" hidden>Mulai ambil 5 foto</button>
                     <button type="button" class="pd-btn" id="btnCancel" hidden>Batal</button>
                     <button type="button" class="pd-btn" id="btnRetake" hidden>Ulangi foto</button>
                 </div>
 
-                {{-- Diisi otomatis oleh JavaScript dengan 30 frame dari kamera --}}
+                {{-- Diisi otomatis oleh JavaScript dengan 5 frame dari kamera --}}
                 <input class="pd-file" type="file" name="photos[]" id="photoInput" accept="image/*" multiple tabindex="-1">
 
                 <div class="pd-msg" id="msg" role="status"></div>
 
                 <div class="pd-tips">
-                    Pastikan pencahayaan cukup, hanya ada satu orang di depan kamera, dan ikuti petunjuk di layar:
-                    hadap lurus, tengok pelan ke kiri dan kanan, lalu angkat dan tundukkan kepala sedikit.
-                    Foto hanya diambil saat wajah terdeteksi. Jika bingkai berwarna merah, perbaiki posisi atau pencahayaan.
-                    Proses pengambilan sekitar 15&ndash;20 detik.
+                    Pastikan pencahayaan cukup dan hanya ada satu orang di depan kamera. Hadap lurus, lalu tengok sedikit ke kiri dan kanan sesuai petunjuk. Foto hanya diambil saat wajah dikenali. Prosesnya sekitar 5-10 detik.
                 </div>
             </section>
         </aside>
@@ -542,25 +539,23 @@
     document.getElementById('btnAddPlate').addEventListener('click', hitungPaket); // tambah baris
     hitungPaket();
 
-    // ================= Foto wajah: ambil 30 sampel (hanya frame yang wajahnya terdeteksi) =================
-    const TOTAL = 30;          // jumlah foto yang dikumpulkan
-    const JEDA  = 300;         // jeda (ms) antar foto yang DITERIMA, supaya variasi posisi ada
-    const JEDA_TANPA_WAJAH = 150; // jeda (ms) sebelum mencoba lagi bila wajah tidak terdeteksi
-    const MAX_DETIK = 90;      // batas waktu total pengambilan
-    const DUP_HITS  = 3;       // berapa frame harus cocok ke member yang sama sebelum dianggap "sudah terdaftar"
-    const LEBAR = 640;         // frame dikecilkan agar upload 30 file tetap ringan
+       // ================= Foto wajah: ambil 5 foto, hanya frame yang wajahnya DIKENALI =================
+    const TOTAL = 5;               // jumlah foto yang dikumpulkan
+    const JEDA  = 400;             // jeda (ms) antar foto yang diterima
+    const JEDA_TANPA_WAJAH = 150;  // jeda (ms) sebelum mencoba lagi
+    const MAX_DETIK = 40;          // batas waktu total pengambilan
+    const DUP_HITS  = 2;           // berapa frame cocok ke member yang sama sebelum dianggap "sudah terdaftar"
+    const LEBAR = 640;
     const KUALITAS = 0.85;
 
     const CEK_URL = "{{ route('parkir.pendaftaran.cek-wajah') }}";
     const CSRF    = document.querySelector('#pdForm input[name="_token"]').value;
 
-    // Petunjuk gerakan kepala per jumlah foto yang sudah terkumpul: [mulai dari foto ke-, teks]
+    // Petunjuk gerakan kepala: [mulai dari foto ke-, teks]
     const PETUNJUK = [
-        [0,  'Hadap lurus ke kamera'],
-        [6,  'Tengok pelan ke kiri'],
-        [12, 'Tengok pelan ke kanan'],
-        [18, 'Angkat dagu sedikit'],
-        [24, 'Tundukkan kepala sedikit'],
+        [0, 'Hadap lurus ke kamera'],
+        [2, 'Tengok sedikit ke kiri'],
+        [4, 'Tengok sedikit ke kanan'],
     ];
     const petunjuk = i => PETUNJUK.reduce((t, [mulai, teks]) => (i >= mulai ? teks : t), PETUNJUK[0][1]);
     const tunggu   = ms => new Promise(r => setTimeout(r, ms));
@@ -653,10 +648,10 @@
         }
         video.srcObject = stream;
         setState('live');
-        setMsg('Posisikan wajah di dalam bingkai, lalu tekan "Mulai ambil 30 foto".');
+        setMsg('Posisikan wajah di dalam bingkai, lalu tekan "Mulai ambil 5 foto".');
     }
 
-    // Tanya server (Laravel -> Python /recognize): wajah terdeteksi? sudah terdaftar sebagai siapa?
+    // Tanya server (Laravel -> Python /recognize): wajah terdeteksi? dikenali sebagai siapa?
     async function cekFrame(blob) {
         const fd = new FormData();
         fd.append('photo', blob, 'frame.jpg');
@@ -675,7 +670,7 @@
         return res.json();
     }
 
-    // Kumpulkan TOTAL foto yang wajahnya terdeteksi, lalu isikan ke <input type="file" multiple>
+    // Kumpulkan TOTAL foto dari orang yang sama (dikenali model), lalu isikan ke <input type="file" multiple>
     async function snap() {
         if (capturing) return;
         if (!video.videoWidth) {
@@ -695,19 +690,25 @@
         canvas.height = h;
         const ctx = canvas.getContext('2d');
 
-        const files = [];
-        const dup = {};              // member_id -> { name, n }
+        const byLabel = {};          // label -> File[]
+        const dup = {};              // label -> { name, n }
+        let adaWajah = false;        // pernah ada wajah terdeteksi?
+        let terpilih = null;
+        let namaDikenali = '';
         const mulai = Date.now();
         guideText.textContent = petunjuk(0);
 
-        while (files.length < TOTAL) {
+        while (!terpilih) {
             if (cancelled) break;
 
             if (Date.now() - mulai > MAX_DETIK * 1000) {
                 setCapturing(false);
                 reset();
-                setMsg('Wajah terlalu sering tidak terdeteksi (terkumpul ' + files.length + ' dari ' + TOTAL +
-                       ' foto). Perbaiki pencahayaan, hadap lurus ke kamera, lalu coba lagi.', true);
+                const pesan = adaWajah
+                    ? 'Wajah tidak dikenali oleh sistem. Hanya wajah yang sudah dilatih ke model yang bisa didaftarkan.'
+                    : 'Wajah tidak terdeteksi. Perbaiki pencahayaan dan hadap lurus ke kamera, lalu coba lagi.';
+                showAlert('<b>Pengambilan foto gagal.</b> ' + esc(pesan));
+                setMsg(pesan, true);
                 return;
             }
 
@@ -727,58 +728,74 @@
             }
             if (cancelled) break;
 
-            // 1) Wajah tidak terdeteksi: jangan simpan frame, tampilkan peringatan, coba lagi
+            // 1) Wajah tidak terdeteksi
             if (!hasil.face) {
                 stage.classList.add('no-face');
                 guideText.textContent = 'Wajah tidak terdeteksi. Hadap kamera & cari tempat yang lebih terang';
                 await tunggu(JEDA_TANPA_WAJAH);
                 continue;
             }
+            adaWajah = true;
+
+            // 2) Wajah ada tapi tidak dikenali model (confidence rendah / bukan salah satu kelas)
+            if (!hasil.accepted) {
+                stage.classList.add('no-face');
+                guideText.textContent = 'Wajah belum dikenali. Hadap lurus & cari tempat yang lebih terang';
+                await tunggu(JEDA_TANPA_WAJAH);
+                continue;
+            }
             stage.classList.remove('no-face');
 
-            // 2) Wajah sudah terdaftar sebagai member lain: hentikan bila terbukti beberapa kali
+            // 3) Wajah dikenali tapi sudah dipakai member lain
             if (hasil.duplicate) {
-                const d = dup[hasil.member_id] || (dup[hasil.member_id] = { name: hasil.name, n: 0 });
+                const d = dup[hasil.label] || (dup[hasil.label] = { name: hasil.name, n: 0 });
                 d.n++;
                 if (d.n >= DUP_HITS) {
                     setCapturing(false);
                     reset();
                     showAlert('<b>Wajah sudah terdaftar</b> sebagai <b>' + esc(d.name) + '</b>. ' +
-                              'Satu orang hanya boleh punya satu akun member, pendaftaran wajah dihentikan.');
+                              'Satu orang hanya boleh punya satu akun member.');
                     setMsg('Wajah sudah terdaftar sebagai ' + d.name + '.', true);
                     return;
                 }
-                // frame yang dicurigai duplikat tidak dipakai
                 await tunggu(JEDA_TANPA_WAJAH);
                 continue;
             }
 
-            // 3) Frame valid: simpan, angka & progress bertambah HANYA di sini
-            files.push(new File([blob], 'frame_' + String(files.length + 1).padStart(2, '0') + '.jpg', { type: 'image/jpeg' }));
-            countBadge.textContent = files.length + '/' + TOTAL;
-            progressBar.style.width = Math.round((files.length / TOTAL) * 100) + '%';
-            guideText.textContent = files.length < TOTAL ? petunjuk(files.length) : 'Selesai';
+            // 4) Frame valid: simpan per label, progres bertambah hanya di sini
+            const arr = byLabel[hasil.label] || (byLabel[hasil.label] = []);
+            arr.push(new File([blob], 'frame_' + String(arr.length + 1).padStart(2, '0') + '.jpg', { type: 'image/jpeg' }));
 
+            const terbanyak = Math.max(...Object.values(byLabel).map(a => a.length));
+            countBadge.textContent = terbanyak + '/' + TOTAL;
+            progressBar.style.width = Math.round((terbanyak / TOTAL) * 100) + '%';
+            guideText.textContent = terbanyak < TOTAL ? petunjuk(terbanyak) : 'Selesai';
+
+            if (arr.length >= TOTAL) {
+                terpilih = arr;
+                namaDikenali = hasil.display || hasil.label;
+                break;
+            }
             await tunggu(JEDA);
         }
 
-        if (cancelled) { setCapturing(false); return; }
+        if (cancelled || !terpilih) { setCapturing(false); return; }
 
         const dt = new DataTransfer();
-        files.forEach(f => dt.items.add(f));
+        terpilih.forEach(f => dt.items.add(f));
         input.files = dt.files;
 
         stopCam();
         setCapturing(false);
 
-        // Pratinjau: frame tengah (foto yang sama akan disimpan sebagai profil wajah)
-        const tengah = files[Math.floor(files.length / 2)];
+        // Pratinjau: frame tengah (foto yang sama disimpan sebagai foto profil)
+        const tengah = terpilih[Math.floor(terpilih.length / 2)];
         const reader = new FileReader();
         reader.onload = e => {
             shot.classList.add('is-mirror');
             shot.src = e.target.result;
             setState('filled');
-            setMsg(files.length + ' foto dengan wajah terdeteksi siap dikirim.');
+            setMsg('Wajah dikenali sebagai ' + namaDikenali + '. ' + terpilih.length + ' foto siap dikirim.');
         };
         reader.readAsDataURL(tengah);
     }
@@ -804,7 +821,7 @@
     document.getElementById('pdForm').addEventListener('submit', e => {
         if (capturing) {
             e.preventDefault();
-            setMsg('Tunggu sampai pengambilan 30 foto selesai.', true);
+            setMsg('Tunggu sampai pengambilan 5 foto selesai.', true);
             return;
         }
 
@@ -831,9 +848,9 @@
         if (!startIn.value) {
             e.preventDefault(); startIn.focus(); return;
         }
-        if (input.files.length < TOTAL / 2) {
+        if (input.files.length < TOTAL) {
             e.preventDefault();
-            setMsg('Foto wajah wajib diisi. Buka kamera lalu ambil 30 foto.', true);
+            setMsg('Foto wajah wajib diisi. Buka kamera lalu ambil 5 foto.', true);
             stage.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return;
         }

@@ -27,12 +27,11 @@ use Throwable;
 
 class PendaftaranController extends Controller
 {
-    /** Jumlah minimal frame yang dikirim browser (Python tetap menyaring yang wajahnya terdeteksi). */
-    private const MIN_FRAMES = 15;
+    /** Jumlah foto minimal yang dikirim browser untuk verifikasi identitas wajah. */
+    private const MIN_FRAMES = 3;
 
-    /** Cek wajah ganda di server: jumlah frame sampel & minimal yang harus cocok ke member yang sama. */
-    private const DUP_SAMPLE = 5;
-    private const DUP_MIN_HITS = 3;
+    /** Berapa persen foto harus dikenali sebagai orang yang sama (0.6 = 60%). */
+    private const RASIO_COCOK = 0.6;
 
     public function index(): View
     {
@@ -46,9 +45,11 @@ class PendaftaranController extends Controller
 
     /**
      * Dipanggil browser per frame saat pengambilan foto (AJAX).
-     * Meneruskan frame ke Python /recognize untuk tahu:
-     *   - apakah wajah terdeteksi (Haar cascade)
-     *   - apakah wajah ini sudah terdaftar sebagai member lain (LBPH)
+     * Meneruskan frame ke Python /recognize (YOLO) lalu menjawab:
+     *   - face      : wajah terdeteksi atau tidak
+     *   - accepted  : wajah dikenali sebagai salah satu kelas model dengan confidence di atas ambang
+     *   - label     : nama kelas hasil tebakan
+     *   - duplicate : label itu sudah dipakai member lain
      */
     public function cekWajah(Request $request): JsonResponse
     {
@@ -66,12 +67,16 @@ class PendaftaranController extends Controller
             return response()->json(['error' => $e->getMessage()], 502);
         }
 
-        $member = $hasil['member_id'] ? Member::find($hasil['member_id']) : null;
+        $diterima = $hasil['face'] && $hasil['label'] && $hasil['conf'] >= $this->ambang();
+        $member = $diterima ? Member::where('face_label', $hasil['label'])->first() : null;
 
         return response()->json([
             'face' => $hasil['face'],
+            'accepted' => $diterima,
+            'label' => $diterima ? $hasil['label'] : null,
+            'display' => $diterima ? $this->namaTampil($hasil['label']) : null,
+            'confidence' => round($hasil['conf'], 3),
             'duplicate' => $member !== null,
-            'member_id' => $member?->id,
             'name' => $member?->name,
         ]);
     }
@@ -80,7 +85,6 @@ class PendaftaranController extends Controller
     {
         $data = $request->validated();
 
-        // Banyak frame wajah dari kamera (name="photos[]"), seperti 30 foto di registrasi.py
         /** @var UploadedFile[] $photos */
         $photos = array_values((array) $request->file('photos'));
 
@@ -90,7 +94,7 @@ class PendaftaranController extends Controller
             ]);
         }
 
-        // 1. Samakan format No. HP & plat nomor, lalu cek duplikat sebelum menyentuh Python/DB
+        // 1. Samakan format No. HP & plat nomor, lalu cek duplikat sebelum menyentuh DB
         $phone = $this->normalizePhone((string) ($data['phone'] ?? ''));
 
         if (! preg_match('/^0\d{8,14}$/', $phone)) {
@@ -133,22 +137,32 @@ class PendaftaranController extends Controller
             ]);
         }
 
-        // Wajah: pengaman di server kalau wajah ini ternyata sudah terdaftar sebagai member lain
-        if ($ada = $this->wajahSudahTerdaftar($photos)) {
+        // 2. Identitas wajah: server mengenali sendiri wajah itu milik siapa (dari model YOLO).
+        //    Hasil dari browser tidak dipercaya, semua foto dicek ulang di sini.
+        try {
+            $label = $this->tentukanIdentitas($photos);
+        } catch (ConnectionException) {
             return back()->withInput()->withErrors([
-                'photos' => "Wajah sudah terdaftar sebagai {$ada->name}. Satu orang hanya boleh punya satu akun member.",
+                'photos' => 'Layanan pengenalan wajah tidak bisa dihubungi. Pastikan Python service sedang berjalan.',
+            ]);
+        } catch (FaceEnrollmentException $e) {
+            return back()->withInput()->withErrors(['photos' => $e->getMessage()]);
+        }
+
+        if ($ada = Member::where('face_label', $label)->first()) {
+            return back()->withInput()->withErrors([
+                'photos' => 'Wajah ini sudah terdaftar sebagai '.$ada->name.'. Satu orang hanya boleh punya satu akun member.',
             ]);
         }
 
-        // Slot: kapasitas per jenis kendaraan. Ini cek awal supaya gagal cepat,
-        // sebelum foto disimpan dan sebelum memanggil Python.
+        // 3. Slot: kapasitas per jenis kendaraan (cek awal supaya gagal cepat)
         $perJenis = array_count_values(array_column($plates, 'type'));
 
         if ($pesanSlot = app(SlotService::class)->kekurangan($perJenis)) {
             return back()->withInput()->withErrors(['plates' => $pesanSlot]);
         }
 
-        // 2. Paket & tagihan dihitung di server (angka dari browser tidak dipercaya)
+        // 4. Paket & tagihan dihitung di server (angka dari browser tidak dipercaya)
         $plan = SubscriptionPlan::where('is_active', true)->find($data['plan_id']);
 
         if (! $plan) {
@@ -164,21 +178,17 @@ class PendaftaranController extends Controller
         $start = Carbon::parse($data['start_date'])->startOfDay();
         $end = $start->copy()->addDays($plan->duration_days - 1);
 
-        // 3. Simpan SATU foto representatif (frame tengah) di disk privat sebagai profil wajah.
-        //    Seluruh frame hanya dikirim ke Python untuk training, tidak disimpan di Laravel.
+        // 5. Simpan SATU foto representatif (frame tengah) di disk privat sebagai foto profil.
         $path = $photos[intdiv(count($photos), 2)]->store('faces', 'local');
         $password = $this->generatePassword();
         $adminId = $request->user()?->id;
-        $enrolledId = null; // member yang wajahnya sudah masuk ke Python
 
-        // 4. Semua data dalam satu transaksi. Enroll wajah ke Python dilakukan paling akhir:
-        //    kalau gagal, exception membatalkan seluruh transaksi database.
         try {
             $member = DB::transaction(function () use (
-                $data, $phone, $plates, $photos, $path, $password, $plan, $start, $end, $total, $adminId, $perJenis, &$enrolledId
+                $data, $phone, $plates, $path, $password, $plan, $start, $end, $total, $adminId, $perJenis, $label
             ) {
-                // Cek ulang dengan kunci: dua pendaftaran bersamaan tidak boleh sama-sama
-                // mengambil slot terakhir. Dilakukan sebelum ada data yang dibuat.
+                // Cek ulang slot dengan kunci: dua pendaftaran bersamaan tidak boleh
+                // sama-sama mengambil slot terakhir.
                 $slot = app(SlotService::class);
                 $slot->kunci();
                 $slot->pastikanMuat($perJenis);
@@ -190,10 +200,10 @@ class PendaftaranController extends Controller
                     'is_active' => true,
                 ]);
 
-                // Akun aplikasi diisi langsung (bukan lewat create) supaya tidak bergantung pada $fillable.
-                // Hash::make aman walau model memakai cast 'hashed' (tidak di-hash dua kali).
+                // Akun aplikasi & label wajah diisi langsung supaya tidak bergantung pada $fillable.
                 $member->password = Hash::make($password);
                 $member->must_change_password = true;
+                $member->face_label = $label;   // nama kelas di model YOLO, harus unik
                 $member->save();
 
                 foreach ($plates as $plate) {
@@ -209,7 +219,6 @@ class PendaftaranController extends Controller
                     'photo_path' => $path,
                 ]);
 
-                // Langganan pertama langsung aktif
                 $subscription = $member->subscriptions()->create([
                     'subscription_plan_id' => $plan->id,
                     'start_date' => $start->toDateString(),
@@ -225,36 +234,24 @@ class PendaftaranController extends Controller
                     'created_by' => $adminId,
                 ]);
 
-                // Terakhir: kirim semua frame ke Python
-                // (deteksi Haar cascade tiap frame -> preprocessing -> training LBPH)
-                $this->enrollFace($member->id, $photos);
-                $enrolledId = $member->id;
-
                 return $member;
             });
         } catch (SlotPenuhException $e) {
-            // Slot dicek di awal transaksi, jadi Python belum disentuh: cukup hapus foto.
             Storage::disk('local')->delete($path);
 
             return back()->withInput()->withErrors(['plates' => $e->getMessage()]);
-        } catch (FaceEnrollmentException $e) {
-            Storage::disk('local')->delete($path);
-
-            return back()->withInput()->withErrors(['photos' => $e->getMessage()]);
         } catch (UniqueConstraintViolationException) {
             Storage::disk('local')->delete($path);
-            $this->removeFace($enrolledId);
 
-            return back()->withInput()->withErrors(['name' => 'No. HP atau plat nomor sudah terdaftar.']);
+            return back()->withInput()->withErrors(['name' => 'No. HP, plat nomor, atau wajah sudah terdaftar.']);
         } catch (Throwable $e) {
             Storage::disk('local')->delete($path);
-            $this->removeFace($enrolledId);
             report($e);
 
             return back()->withInput()->withErrors(['name' => 'Gagal menyimpan data member. Silakan coba lagi.']);
         }
 
-        // 5. Kembali ke form; kata sandi sementara hanya tampil sekali lewat flash session
+        // 6. Kembali ke form; kata sandi sementara hanya tampil sekali lewat flash session
         return back()->with([
             'success' => 'Member berhasil didaftarkan.',
             'created' => [
@@ -269,13 +266,22 @@ class PendaftaranController extends Controller
         ]);
     }
 
+    /** Ambang confidence untuk menerima sebuah wajah sebagai kelas tertentu. */
+    private function ambang(): float
+    {
+        return (float) config('services.cv.accept_conf', 0.75);
+    }
+
+    /** "Dimas-Dwi-Nugroho" -> "Dimas Dwi Nugroho" */
+    private function namaTampil(string $label): string
+    {
+        return str_replace(['-', '_'], ' ', $label);
+    }
+
     /**
-     * Kirim satu frame ke Python /recognize.
-     *  - 200 dengan face_detected=false -> wajah tidak ada di frame
-     *  - 200 dengan face_detected=true  -> wajah terdeteksi; matched=true bila cocok member yang ada
-     *  - 503                            -> model belum dilatih (belum ada member terdaftar)
+     * Kirim satu frame ke Python /recognize (YOLO).
      *
-     * @return array{face: bool, member_id: ?int}
+     * @return array{face: bool, label: ?string, conf: float}
      *
      * @throws ConnectionException
      * @throws FaceEnrollmentException
@@ -286,11 +292,6 @@ class PendaftaranController extends Controller
             ->attach('photo', $isiFoto, 'frame.jpg')
             ->post(config('services.cv.url', 'http://127.0.0.1:5000').'/recognize');
 
-        if ($response->status() === 503) {
-            // Model belum ada (pertama kali, belum ada member terdaftar) → wajah "ok" tapi tidak cocok siapa pun
-            return ['face' => true, 'member_id' => null];
-        }
-
         if ($response->failed()) {
             throw new FaceEnrollmentException(
                 $response->json('error') ?? 'Layanan pengenalan wajah tidak merespons.'
@@ -299,106 +300,57 @@ class PendaftaranController extends Controller
 
         $json = $response->json();
 
-        // face_detected=false → wajah tidak ada di frame (orang belum menghadap kamera)
         if (! ($json['face_detected'] ?? false)) {
-            return ['face' => false, 'member_id' => null];
+            return ['face' => false, 'label' => null, 'conf' => 0.0];
         }
 
-        // Wajah ada → cek apakah sudah terdaftar (matched) sebagai member lain
-        $matched  = $json['matched']   ?? false;
-        $memberId = $json['member_id'] ?? null;
-
         return [
-            'face'      => true,
-            'member_id' => $matched && $memberId ? (int) $memberId : null,
+            'face' => true,
+            'label' => $json['predicted_name'] ?? null,
+            'conf' => (float) ($json['confidence'] ?? 0),
         ];
     }
 
     /**
-     * Pengaman di server: ambil beberapa frame sampel, cek ke Python.
-     * Dianggap sudah terdaftar bila minimal DUP_MIN_HITS frame cocok ke member yang sama.
-     * Kalau Python tidak bisa dihubungi, dilewati (enrollFace nanti akan memberi pesan error yang jelas).
+     * Tentukan wajah di foto-foto itu milik siapa.
+     * Syarat: minimal RASIO_COCOK dari semua foto dikenali sebagai orang yang sama
+     * dengan confidence di atas ambang.
      *
      * @param  UploadedFile[]  $photos
+     * @return string nama kelas (face_label)
+     *
+     * @throws ConnectionException
+     * @throws FaceEnrollmentException
      */
-    private function wajahSudahTerdaftar(array $photos): ?Member
+    private function tentukanIdentitas(array $photos): string
     {
-        $n = count($photos);
-        $ambil = min(self::DUP_SAMPLE, $n);
         $hits = [];
 
-        for ($i = 0; $i < $ambil; $i++) {
-            $foto = $photos[intdiv($i * $n, $ambil)];
+        foreach ($photos as $foto) {
+            $h = $this->kenali(file_get_contents($foto->getRealPath()));
 
-            try {
-                $hasil = $this->kenali(file_get_contents($foto->getRealPath()));
-            } catch (Throwable) {
-                return null;
-            }
-
-            if ($hasil['member_id']) {
-                $hits[$hasil['member_id']] = ($hits[$hasil['member_id']] ?? 0) + 1;
+            if ($h['face'] && $h['label'] && $h['conf'] >= $this->ambang()) {
+                $hits[$h['label']] = ($hits[$h['label']] ?? 0) + 1;
             }
         }
 
         if ($hits === []) {
-            return null;
+            throw new FaceEnrollmentException(
+                'Wajah tidak dikenali oleh sistem. Hanya wajah yang sudah dilatih ke model yang bisa didaftarkan.'
+            );
         }
 
         arsort($hits);
-        $id = array_key_first($hits);
+        $label = array_key_first($hits);
+        $perlu = (int) ceil(count($photos) * self::RASIO_COCOK);
 
-        return $hits[$id] >= self::DUP_MIN_HITS ? Member::find($id) : null;
-    }
-
-    /**
-     * Kirim semua frame ke Python: tiap frame dideteksi (Haar cascade) -> preprocessing -> training LBPH.
-     * Field multipart bernama "photos" diulang per frame; Flask membacanya lewat request.files.getlist('photos').
-     *
-     * @param  UploadedFile[]  $photos
-     */
-    private function enrollFace(int $memberId, array $photos): void
-    {
-        try {
-            $request = Http::timeout(120); // deteksi 30 frame + training ulang bisa memakan waktu
-
-            foreach ($photos as $i => $photo) {
-                $request = $request->attach(
-                    'photos',
-                    file_get_contents($photo->getRealPath()),
-                    sprintf('frame_%02d.jpg', $i + 1)
-                );
-            }
-
-            $response = $request->post(
-                config('services.cv.url', 'http://127.0.0.1:5000').'/enroll',
-                ['member_id' => $memberId]
-            );
-        } catch (ConnectionException) {
+        if ($hits[$label] < $perlu) {
             throw new FaceEnrollmentException(
-                'Layanan pengenalan wajah tidak bisa dihubungi. Pastikan Python service sedang berjalan.'
+                'Wajah tidak konsisten dikenali sebagai satu orang. Ambil ulang foto dengan pencahayaan yang lebih baik.'
             );
         }
 
-        if ($response->failed()) {
-            throw new FaceEnrollmentException(
-                $response->json('error') ?? 'Layanan pengenalan wajah tidak merespons.'
-            );
-        }
-    }
-
-    /** Bersihkan sampel wajah di Python bila transaksi gagal setelah enroll berhasil. */
-    private function removeFace(?int $memberId): void
-    {
-        if ($memberId === null) {
-            return;
-        }
-
-        try {
-            Http::timeout(30)->delete(config('services.cv.url', 'http://127.0.0.1:5000')."/members/{$memberId}");
-        } catch (Throwable $e) {
-            report($e);
-        }
+        return $label;
     }
 
     /** "+62 812-3456-7890" / "6281234567890" / "81234567890" -> "081234567890" */

@@ -24,9 +24,9 @@ class StoreMemberRequest extends FormRequest
             'vehicle_types'   => ['required', 'array', 'min:1'],
             'vehicle_types.*' => ['required', 'in:mobil'],
 
-            // Banyak frame wajah dari kamera (browser mengirim ~30 frame JPEG).
-            // Python menyaring frame yang wajahnya terdeteksi; Laravel hanya memastikan jumlah & formatnya.
-            'photos'   => ['required', 'array', 'min:15', 'max:40'],
+            // Foto wajah dari kamera (browser mengirim 5 frame JPEG yang wajahnya dikenali model).
+            // Identitas wajah dicek ulang di PendaftaranController lewat Python /recognize.
+            'photos'   => ['required', 'array', 'min:3', 'max:10'],
             'photos.*' => ['image', 'mimes:jpg,jpeg,png', 'max:4096'],
 
             // Langganan pertama & pembayarannya. Kunci ini yang dibaca PendaftaranController.
@@ -47,7 +47,7 @@ class StoreMemberRequest extends FormRequest
 
             'photos.required'         => 'Foto wajah wajib diambil dari kamera.',
             'photos.array'            => 'Format foto wajah tidak valid. Ambil ulang dari kamera.',
-            'photos.min'              => 'Foto wajah kurang (minimal :min foto). Ambil ulang sampai 30 foto terkumpul.',
+            'photos.min'              => 'Foto wajah kurang (minimal :min foto). Ambil ulang dari kamera sampai semua foto terkumpul.',
             'photos.max'              => 'Terlalu banyak foto (maksimal :max). Ambil ulang dari kamera.',
             'photos.*.image'          => 'Salah satu foto bukan gambar yang valid. Ambil ulang dari kamera.',
             'photos.*.mimes'          => 'Foto wajah harus berformat JPG atau PNG.',
