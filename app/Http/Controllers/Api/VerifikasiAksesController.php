@@ -19,12 +19,19 @@ use Illuminate\Http\Request;
  *
  * Payload:
  *   {
- *     "gate": "gate_utama",        // ID gate
- *     "member_id": 3,              // ID member hasil pengenalan wajah LBPH (null jika asing)
+ *     "gate": "gate_masuk",        // ID gate (gate_masuk / gate_keluar / gate_utama)
+ *     "direction": "in",           // 'in' | 'out' (opsional, diturunkan dari nama gate)
+ *     "member_id": 3,              // ID member hasil pengenalan wajah YOLO (null jika tidak dikenali)
  *     "plate_text": "BD2541WH",    // Nomor plat hasil OCR (null jika tidak terbaca)
- *     "distance": 42.5,            // Jarak LBPH (semakin kecil semakin mirip)
+ *     "distance": 0.06,            // 1 - confidence YOLO (semakin kecil semakin yakin); hanya dicatat, tidak dipakai memutuskan
  *     "update_gate": true          // Apakah langsung mengupdate status gate ESP32 (default: true)
  *   }
+ *
+ * Pencocokan plat:
+ *   1. Persis (tanpa spasi/tanda baca, huruf besar) ke semua kendaraan.
+ *   2. Jika tidak persis: toleransi OCR terbatas, HANYA ke kendaraan milik member yang wajahnya
+ *      dikenali, panjang plat harus sama, beda tepat 1 karakter, dan pasangan karakternya
+ *      harus yang umum tertukar OCR (lihat KARAKTER_MIRIP).
  *
  * Response:
  *   {
@@ -39,6 +46,20 @@ use Illuminate\Http\Request;
  */
 class VerifikasiAksesController extends Controller
 {
+    /**
+     * Pasangan karakter yang sering tertukar saat OCR plat.
+     * Dipakai untuk toleransi satu karakter pada pencocokan plat.
+     */
+        private const KARAKTER_MIRIP = [
+        ['0', 'O'],
+        ['0', 'D'],
+        ['1', 'I'],
+        ['8', 'B'],
+        ['5', 'S'],
+        ['2', 'Z'],
+        ['6', 'G'],
+    ];
+
     public function verifikasi(Request $request): JsonResponse
     {
         $gate = $request->input('gate', 'gate_utama');
@@ -60,11 +81,11 @@ class VerifikasiAksesController extends Controller
             $member = Member::find($memberId);
         }
 
-        // 2. Cari Kendaraan dari plat nomor (exact & fuzzy matching)
+        // 2. Cari Kendaraan dari plat nomor (persis, lalu toleransi OCR terbatas)
         $vehicle = null;
         $matchedPlate = null;
         if ($plateTeks !== null) {
-            [$vehicle, $matchedPlate] = $this->findVehicle($plateTeks);
+            [$vehicle, $matchedPlate] = $this->findVehicle($plateTeks, $member);
         }
 
         // Tentukan arah gerbang (direction) jika belum ditentukan
@@ -107,7 +128,7 @@ class VerifikasiAksesController extends Controller
                 $keterangan,
                 $member,
                 $vehicle,
-                $plateTeks ?? $matchedPlate,
+                $plateTeks ?? $matchedPlate,   // simpan teks ASLI hasil OCR supaya bisa diaudit
                 $distance,
                 $direction,
                 $reason
@@ -238,9 +259,14 @@ class VerifikasiAksesController extends Controller
         // ── KASUS 8: SEMUA COCOK -> AKSES DITERIMA (IZIN) ──────────────────
         $aksi = ($direction === 'out') ? 'Keluar' : 'Masuk';
 
+        // Beri tahu bila plat cocok lewat toleransi OCR (teks terbaca berbeda dari yang terdaftar)
+        $catatan = $this->normalizePlate($plateTeks) !== $this->normalizePlate($vehicle->plate_number)
+            ? " (terbaca: {$plateTeks})"
+            : '';
+
         return [
             'izin',
-            "Akses {$aksi} Diterima: {$member->name} | Kendaraan: {$vehicle->plate_number}",
+            "Akses {$aksi} Diterima: {$member->name} | Kendaraan: {$vehicle->plate_number}{$catatan}",
             true,
             null,
         ];
@@ -361,63 +387,74 @@ class VerifikasiAksesController extends Controller
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Helper Pencarian Kendaraan (Exact & Fuzzy Levenshtein)
+    // Helper Pencarian Kendaraan (persis, lalu toleransi OCR terbatas)
     // ──────────────────────────────────────────────────────────────────────────
-    private function findVehicle(string $rawPlate): array
+    private function findVehicle(string $rawPlate, ?Member $member = null): array
     {
-        $cleanPlate = $this->normalizePlate($rawPlate);
-        if ($cleanPlate === '') {
+        $clean = $this->normalizePlate($rawPlate);
+        if ($clean === '') {
             return [null, null];
         }
 
-        // 1. Coba pencarian persis (exact match)
+        // 1. Persis, ke semua kendaraan (supaya pesan "milik member lain" tetap muncul)
         $vehicle = Vehicle::with('member')
-            ->whereRaw("REPLACE(UPPER(plate_number), ' ', '') = ?", [$cleanPlate])
+            ->whereRaw("REPLACE(UPPER(plate_number), ' ', '') = ?", [$clean])
             ->first();
 
         if ($vehicle) {
-            return [$vehicle, $cleanPlate];
+            return [$vehicle, $clean];
         }
 
-        // 2. Coba pencarian kemiripan (fuzzy similarity untuk toleransi OCR)
-        $vehicles = Vehicle::with('member')->get();
-        $bestVehicle = null;
-        $bestScore = 0.0;
+        // 2. Toleransi OCR: HANYA kendaraan milik member yang wajahnya dikenali
+        if ($member) {
+            $kendaraanMember = Vehicle::with('member')->where('member_id', $member->id)->get();
 
-        foreach ($vehicles as $v) {
-            $regPlate = $this->normalizePlate($v->plate_number);
-            $score = $this->plateSimilarity($cleanPlate, $regPlate);
+            foreach ($kendaraanMember as $v) {
+                $reg = $this->normalizePlate($v->plate_number);
 
-            if ($score > $bestScore) {
-                $bestScore = $score;
-                $bestVehicle = $v;
+                if ($this->cocokToleran($clean, $reg)) {
+                    return [$v, $reg];
+                }
             }
         }
 
-        if ($bestVehicle && $bestScore >= 0.60) {
-            return [$bestVehicle, $this->normalizePlate($bestVehicle->plate_number)];
-        }
-
-        return [null, $cleanPlate];
+        return [null, $clean];
     }
 
-    private function plateSimilarity(string $ocr, string $registered): float
+    /**
+     * Toleransi salah baca OCR: panjang sama, beda tepat 1 karakter,
+     * dan pasangan karakternya termasuk yang sering tertukar.
+     */
+    private function cocokToleran(string $ocr, string $reg): bool
     {
-        if ($ocr === $registered) {
-            return 1.0;
-        }
-        if ($ocr === '' || $registered === '') {
-            return 0.0;
+        if (strlen($ocr) !== strlen($reg)) {
+            return false;
         }
 
-        similar_text($ocr, $registered, $percent);
-        $similarScore = $percent / 100;
+        $beda = 0;
 
-        $distance = levenshtein($ocr, $registered);
-        $maxLength = max(strlen($ocr), strlen($registered));
-        $levScore = $maxLength > 0 ? max(0, 1 - ($distance / $maxLength)) : 0.0;
+        for ($i = 0, $n = strlen($ocr); $i < $n; $i++) {
+            if ($ocr[$i] === $reg[$i]) {
+                continue;
+            }
 
-        return ($similarScore * 0.5) + ($levScore * 0.5);
+            if (++$beda > 1 || ! $this->karakterMirip($ocr[$i], $reg[$i])) {
+                return false;
+            }
+        }
+
+        return $beda === 1;
+    }
+
+    private function karakterMirip(string $a, string $b): bool
+    {
+        foreach (self::KARAKTER_MIRIP as [$x, $y]) {
+            if (($a === $x && $b === $y) || ($a === $y && $b === $x)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function getActiveSubscription(?Member $member)
@@ -436,6 +473,6 @@ class VerifikasiAksesController extends Controller
 
     private function normalizePlate(?string $plate): string
     {
-        return strtoupper(preg_replace('/[^A-Z0-9]/', '', $plate ?? ''));
+        return strtoupper(preg_replace('/[^A-Z0-9]/', '', strtoupper($plate ?? '')));
     }
 }
