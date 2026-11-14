@@ -8,6 +8,7 @@ class AccessRequest extends Model
 {
     protected $fillable = [
         'member_id', 'gate', 'vehicle_id', 'direction', 'reason',
+        'guest_access_permission_id',
         'plate_detected', 'plate_match', 'face_match', 'face_distance',
         'status', 'requested_at', 'responded_at', 'expires_at', 'buzzer_at',
     ];

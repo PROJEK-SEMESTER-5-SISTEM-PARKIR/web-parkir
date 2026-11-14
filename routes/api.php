@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\VerifikasiAksesController;
 use App\Http\Middleware\EnsureMemberCanAccess;
 use App\Http\Controllers\Api\PanggilPetugasController;
 use App\Http\Controllers\Api\PerpanjangController;
+use App\Http\Controllers\Api\GuestAccessController;
 
 // ===== Gerbang parkir (IoT) - punyamu, tidak diubah =====
 Route::post('/parking/trigger',[ParkingGateController::class,'trigger']);
@@ -53,4 +54,9 @@ Route::middleware(['auth:sanctum', EnsureMemberCanAccess::class])->group(functio
     // Panggil petugas: WAJIB di dalam grup auth supaya $request->user() terisi
     Route::post('/panggil-petugas', [PanggilPetugasController::class, 'store'])->middleware('throttle:5,1');
     Route::delete('/panggil-petugas', [PanggilPetugasController::class, 'destroy']);
+
+    // Izin akses tamu
+    Route::get('/izin-tamu', [GuestAccessController::class, 'index']);
+    Route::post('/izin-tamu', [GuestAccessController::class, 'store']);
+    Route::delete('/izin-tamu/{id}', [GuestAccessController::class, 'destroy'])->whereNumber('id');
 });

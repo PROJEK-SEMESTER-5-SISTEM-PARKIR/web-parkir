@@ -17,4 +17,9 @@ class Vehicle extends Model
     {
         return $this->hasMany(ParkingSession::class);
     }
+
+    public function guestPermissions()
+    {
+        return $this->hasMany(GuestAccessPermission::class);
+    }
 }

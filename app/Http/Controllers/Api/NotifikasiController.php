@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AccessRequest;
 use App\Models\ParkingGateState;
 use App\Models\ParkingSession;
+use App\Models\SecurityAlert;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -27,12 +28,37 @@ class NotifikasiController extends Controller
     {
         $memberId = $request->user()->id;
 
-        // Permintaan yang waktunya habis ditandai timeout.
-        AccessRequest::where('member_id', $memberId)
+        // Permintaan yang waktunya habis ditandai timeout dan dibuat SecurityAlert-nya
+        $kedaluwarsa = AccessRequest::where('member_id', $memberId)
             ->where('status', 'pending')
             ->whereNotNull('expires_at')
             ->where('expires_at', '<=', now())
-            ->update(['status' => 'timeout', 'responded_at' => now()]);
+            ->get();
+
+        foreach ($kedaluwarsa as $req) {
+            $req->update(['status' => 'timeout', 'responded_at' => now()]);
+
+            // Buat SecurityAlert untuk petugas: timeout tidak ada respons (Aturan 6)
+            if (!$req->securityAlert()->exists()) {
+                SecurityAlert::create([
+                    'access_request_id' => $req->id,
+                    'type'              => 'timeout_no_response',
+                    'status'            => 'open',
+                ]);
+
+                Log::info("[Notifikasi] SecurityAlert timeout dibuat untuk AccessRequest #{$req->id}");
+            }
+
+            // Matikan gate state jika masih terkait dengan kendaraan ini
+            $state = ParkingGateState::where('gate', $req->gate)->first();
+            if ($state && (int) $state->plate_vehicle_id === (int) $req->vehicle_id && $state->izin === 'MENUNGGU') {
+                $state->update([
+                    'trigger' => false,
+                    'izin'    => 'TOLAK',
+                    'status'  => 'TIMEOUT - TIDAK ADA RESPONS PEMILIK',
+                ]);
+            }
+        }
 
         $items = AccessRequest::where('member_id', $memberId)
             ->whereNotNull('reason') // hanya kejadian yang butuh perhatian, bukan akses otomatis biasa
@@ -42,7 +68,7 @@ class NotifikasiController extends Controller
 
         return response()->json([
             'pending_count' => $items->where('status', 'pending')->count(),
-            'data' => $items->map(fn (AccessRequest $r) => $this->payload($r))->values(),
+            'data'          => $items->map(fn (AccessRequest $r) => $this->payload($r))->values(),
         ]);
     }
 
@@ -61,7 +87,7 @@ class NotifikasiController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (! $req) {
+            if (!$req) {
                 return response()->json(['message' => 'Permintaan tidak ditemukan.'], 404);
             }
 
@@ -72,17 +98,27 @@ class NotifikasiController extends Controller
             if ($req->expires_at && $req->expires_at->isPast()) {
                 $req->update(['status' => 'timeout', 'responded_at' => now()]);
 
+                // SecurityAlert untuk timeout
+                if (!$req->securityAlert()->exists()) {
+                    SecurityAlert::create([
+                        'access_request_id' => $req->id,
+                        'type'              => 'timeout_no_response',
+                        'status'            => 'open',
+                    ]);
+                }
+
                 return response()->json(['message' => 'Waktu habis. Palang tetap tertutup.'], 410);
             }
 
             $state = ParkingGateState::where('gate', $req->gate)->lockForUpdate()->first();
 
-            if (! $this->gerbangMasihTerkait($state, $req)) {
+            if (!$this->gerbangMasihTerkait($state, $req)) {
                 $req->update(['status' => 'timeout', 'responded_at' => now()]);
 
                 return response()->json(['message' => 'Gerbang sudah memproses kendaraan lain. Permintaan ini kedaluwarsa.'], 409);
             }
 
+            // ── "Ini saya" (approve) → buka palang ────────────────────────────
             if ($decision === 'approve') {
                 $req->update(['status' => 'approved_by_member', 'responded_at' => now()]);
                 $this->bukaPalang($req, $state);
@@ -90,10 +126,20 @@ class NotifikasiController extends Controller
                 return response()->json(['message' => 'Akses diizinkan. Palang dibuka.']);
             }
 
+            // ── "Bukan saya" (reject) → tutup palang + buat SecurityAlert ─────
             $req->update(['status' => 'rejected_by_member', 'responded_at' => now()]);
             $state->update(['trigger' => false, 'izin' => 'TOLAK', 'status' => 'DITOLAK PEMILIK']);
 
-            // TODO: buat SecurityAlert untuk petugas (menunggu model & migrasi SecurityAlert).
+            // Buat SecurityAlert untuk ditampilkan di halaman Darurat (Aturan 6)
+            if (!$req->securityAlert()->exists()) {
+                SecurityAlert::create([
+                    'access_request_id' => $req->id,
+                    'type'              => 'face_mismatch_rejected',
+                    'status'            => 'open',
+                ]);
+
+                Log::warning("[Notifikasi] PERINGATAN: Pemilik menolak akses untuk plat {$req->plate_detected}. SecurityAlert dibuat.");
+            }
 
             return response()->json(['message' => 'Akses ditolak. Palang tetap tertutup.']);
         });
@@ -106,17 +152,17 @@ class NotifikasiController extends Controller
             ->where('member_id', $request->user()->id)
             ->first();
 
-        if (! $req) {
+        if (!$req) {
             return response()->json(['message' => 'Permintaan tidak ditemukan.'], 404);
         }
 
-        if (! $this->bolehBuzzer($req)) {
+        if (!$this->bolehBuzzer($req)) {
             return response()->json(['message' => 'Buzzer hanya bisa dinyalakan saat kejadian masih berlangsung.'], 409);
         }
 
         $state = ParkingGateState::where('gate', $req->gate)->first();
 
-        if (! $state || (int) $state->plate_vehicle_id !== (int) $req->vehicle_id) {
+        if (!$state || (int) $state->plate_vehicle_id !== (int) $req->vehicle_id) {
             return response()->json(['message' => 'Gerbang sudah memproses kendaraan lain.'], 409);
         }
 
@@ -136,18 +182,20 @@ class NotifikasiController extends Controller
         $req->forceFill(['buzzer_at' => now()])->save();
 
         Log::info('Buzzer gerbang dinyalakan pemilik', [
-            'gate' => $req->gate,
-            'member_id' => $req->member_id,
+            'gate'              => $req->gate,
+            'member_id'         => $req->member_id,
             'access_request_id' => $req->id,
         ]);
 
         return response()->json([
-            'message' => 'Buzzer dinyalakan selama '.self::BUZZER_DETIK.' detik.',
+            'message' => 'Buzzer dinyalakan selama ' . self::BUZZER_DETIK . ' detik.',
             'seconds' => self::BUZZER_DETIK,
         ]);
     }
 
-    // ───────────────────────────── bantu ─────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // BANTU
+    // ─────────────────────────────────────────────────────────────────────────
 
     /** Gerbang masih menunggu kendaraan yang sama dengan permintaan ini. */
     private function gerbangMasihTerkait(?ParkingGateState $state, AccessRequest $req): bool
@@ -186,17 +234,17 @@ class NotifikasiController extends Controller
                 ->where('status', 'active')
                 ->update([
                     'exit_access_request_id' => $req->id,
-                    'exit_time' => now(),
-                    'status' => 'completed',
+                    'exit_time'              => now(),
+                    'status'                 => 'completed',
                 ]);
             $status = 'PALANG TERBUKA - KENDARAAN KELUAR (DIIZINKAN PEMILIK)';
         } else {
             ParkingSession::create([
-                'member_id' => $req->member_id,
-                'vehicle_id' => $req->vehicle_id,
+                'member_id'              => $req->member_id,
+                'vehicle_id'             => $req->vehicle_id,
                 'entry_access_request_id' => $req->id,
-                'entry_time' => now(),
-                'status' => 'active',
+                'entry_time'             => now(),
+                'status'                 => 'active',
             ]);
             $status = 'PALANG TERBUKA - KENDARAAN MASUK (DIIZINKAN PEMILIK)';
         }
@@ -219,26 +267,26 @@ class NotifikasiController extends Controller
         }
 
         return [
-            'id' => $r->id,
-            'title' => $judul,
-            'body' => $isi,
-            'status' => $r->status,
-            'plate' => $this->formatPlat((string) $r->plate_detected),
+            'id'          => $r->id,
+            'title'       => $judul,
+            'body'        => $isi,
+            'status'      => $r->status,
+            'plate'       => $this->formatPlat((string) $r->plate_detected),
             'needs_action' => $menunggu,
             'seconds_left' => $menunggu && $r->expires_at
                 ? max(0, $r->expires_at->timestamp - now()->timestamp)
                 : 0,
             'requested_at' => optional($r->requested_at)->toIso8601String(),
-            'direction' => $r->direction,
-            'reason' => $r->reason,
-            'actions' => $aksi,
+            'direction'    => $r->direction,
+            'reason'       => $r->reason,
+            'actions'      => $aksi,
         ];
     }
 
     private function teks(AccessRequest $r): array
     {
-        $arah = $r->direction === 'exit' ? 'keluar' : 'masuk';
-        $plat = $this->formatPlat((string) $r->plate_detected);
+        $arah      = $r->direction === 'out' ? 'keluar' : 'masuk';
+        $plat      = $this->formatPlat((string) $r->plate_detected);
         $pengemudi = $r->reason === 'face_other_member'
             ? 'pengemudinya terdaftar sebagai member lain'
             : 'wajah pengemudinya tidak dikenali';
@@ -250,8 +298,8 @@ class NotifikasiController extends Controller
             ],
             'approved_by_member' => ['Akses diizinkan', "Anda mengizinkan kendaraan {$plat} {$arah}."],
             'rejected_by_member' => ['Akses ditolak', "Anda menolak kendaraan {$plat} {$arah}. Palang tetap tertutup."],
-            'timeout' => ['Permintaan kedaluwarsa', "Tidak ada respons untuk kendaraan {$plat}. Palang tetap tertutup."],
-            default => ['Permintaan dibatalkan', "Permintaan akses untuk kendaraan {$plat} dibatalkan."],
+            'timeout'            => ['Permintaan kedaluwarsa', "Tidak ada respons untuk kendaraan {$plat}. Palang tetap tertutup."],
+            default              => ['Permintaan dibatalkan', "Permintaan akses untuk kendaraan {$plat} dibatalkan."],
         };
     }
 

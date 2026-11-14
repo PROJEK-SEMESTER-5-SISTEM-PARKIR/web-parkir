@@ -207,37 +207,39 @@ test('mobil yang berada di dalam dapat keluar di gate_keluar dan sesi ditutup', 
 });
 
 test('alur parking gate controller dengan face result dan plate result menghormati status keluar masuk', function () {
+    // Helper: kirim 5 frame wajah (sistem voting 3/5) untuk satu gate
+    $kirimWajah = function (string $gate, int $memberId, float $jarak) {
+        for ($i = 0; $i < 5; $i++) {
+            $this->postJson('/api/parking/face-result', [
+                'gate'      => $gate,
+                'member_id' => $memberId,
+                'distance'  => $jarak,
+            ]);
+        }
+    };
+
     // 1. Trigger gate_masuk
     $this->postJson('/api/parking/trigger', ['gate' => 'gate_masuk']);
 
-    // 2. Face result
-    $this->postJson('/api/parking/face-result', [
-        'gate' => 'gate_masuk',
-        'member_id' => $this->member->id,
-        'distance' => 45.2,
-    ]);
+    // 2. Kirim 5 frame wajah (voting → ≥3/5 cocok)
+    $kirimWajah('gate_masuk', $this->member->id, 45.2);
 
     // 3. Plate result -> mobil masuk
     $this->postJson('/api/parking/plate-result', [
-        'gate' => 'gate_masuk',
+        'gate'           => 'gate_masuk',
         'plate_detected' => 'B 1001 ZZZ',
     ]);
 
     $stateMasuk = ParkingGateState::where('gate', 'gate_masuk')->first();
     expect($stateMasuk->izin)->toBe('BUKA');
     expect($stateMasuk->status)->toBe('PALANG TERBUKA - KENDARAAN MASUK');
-
     expect(ParkingSession::where('vehicle_id', $this->vehicle->id)->where('status', 'active')->count())->toBe(1);
 
     // 4. Trigger gate_masuk lagi -> mobil sudah di dalam
     $this->postJson('/api/parking/trigger', ['gate' => 'gate_masuk']);
-    $this->postJson('/api/parking/face-result', [
-        'gate' => 'gate_masuk',
-        'member_id' => $this->member->id,
-        'distance' => 45.2,
-    ]);
+    $kirimWajah('gate_masuk', $this->member->id, 45.2);
     $this->postJson('/api/parking/plate-result', [
-        'gate' => 'gate_masuk',
+        'gate'           => 'gate_masuk',
         'plate_detected' => 'B 1001 ZZZ',
     ]);
 
@@ -248,13 +250,9 @@ test('alur parking gate controller dengan face result dan plate result menghorma
 
     // 5. Trigger gate_keluar -> mobil keluar
     $this->postJson('/api/parking/trigger', ['gate' => 'gate_keluar']);
-    $this->postJson('/api/parking/face-result', [
-        'gate' => 'gate_keluar',
-        'member_id' => $this->member->id,
-        'distance' => 48.0,
-    ]);
+    $kirimWajah('gate_keluar', $this->member->id, 48.0);
     $this->postJson('/api/parking/plate-result', [
-        'gate' => 'gate_keluar',
+        'gate'           => 'gate_keluar',
         'plate_detected' => 'B 1001 ZZZ',
     ]);
 
@@ -265,13 +263,9 @@ test('alur parking gate controller dengan face result dan plate result menghorma
 
     // 6. Trigger gate_keluar lagi -> mobil sudah keluar
     $this->postJson('/api/parking/trigger', ['gate' => 'gate_keluar']);
-    $this->postJson('/api/parking/face-result', [
-        'gate' => 'gate_keluar',
-        'member_id' => $this->member->id,
-        'distance' => 48.0,
-    ]);
+    $kirimWajah('gate_keluar', $this->member->id, 48.0);
     $this->postJson('/api/parking/plate-result', [
-        'gate' => 'gate_keluar',
+        'gate'           => 'gate_keluar',
         'plate_detected' => 'B 1001 ZZZ',
     ]);
 

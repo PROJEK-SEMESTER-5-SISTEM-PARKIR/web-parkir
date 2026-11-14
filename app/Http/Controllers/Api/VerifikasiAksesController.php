@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AccessRequest;
+use App\Models\GuestAccessPermission;
 use App\Models\Member;
 use App\Models\ParkingGateState;
 use App\Models\ParkingSession;
@@ -107,7 +108,7 @@ class VerifikasiAksesController extends Controller
         }
 
         // 3. Evaluasi kecocokan dan hak akses
-        [$status, $keterangan, $cocok, $reason] = $this->evaluasiAkses(
+        [$status, $keterangan, $cocok, $reason, $izinTamu] = $this->evaluasiAkses(
             $memberId,
             $member,
             $plateTeks,
@@ -131,7 +132,8 @@ class VerifikasiAksesController extends Controller
                 $plateTeks ?? $matchedPlate,   // simpan teks ASLI hasil OCR supaya bisa diaudit
                 $distance,
                 $direction,
-                $reason
+                $reason,
+                $izinTamu
             );
         }
 
@@ -164,7 +166,70 @@ class VerifikasiAksesController extends Controller
 
         // Kondisi belum lengkap sama sekali
         if (! $wajahTerdeteksi && ! $platTerbaca) {
-            return ['menunggu', 'Arahkan wajah dan plat kendaraan ke kamera', false, null];
+            return ['menunggu', 'Arahkan wajah dan plat kendaraan ke kamera', false, null, null];
+        }
+
+        // ── MODE TAMU: Jika plat terdaftar & memiliki izin tamu aktif ──────────
+        // Cek SEBELUM pengecekan wajah, karena mode tamu bypass verifikasi wajah
+        if ($platTerbaca && $vehicle) {
+            $izinTamu = GuestAccessPermission::where('vehicle_id', $vehicle->id)
+                ->where('is_active', true)
+                ->where('valid_from', '<=', now())
+                ->where('valid_until', '>=', now())
+                ->first();
+
+            if ($izinTamu) {
+                // Cek subscription member PEMILIK kendaraan
+                $pemilik = $vehicle->member;
+                $subscription = $this->getActiveSubscription($pemilik);
+
+                if (! $subscription) {
+                    return [
+                        'tolak',
+                        "Langganan parkir pemilik kendaraan {$vehicle->plate_number} tidak aktif atau sudah habis masa berlakunya",
+                        false,
+                        'subscription_expired',
+                        null,
+                    ];
+                }
+
+                // Anti-passback: kendaraan masuk
+                $activeSession = ParkingSession::where('vehicle_id', $vehicle->id)
+                    ->where('status', 'active')
+                    ->latest('entry_time')
+                    ->first();
+
+                if ($direction === 'in' && $activeSession) {
+                    return [
+                        'tolak',
+                        "Kendaraan {$vehicle->plate_number} sudah berada di dalam area parkir (belum keluar)",
+                        false,
+                        'already_inside',
+                        null,
+                    ];
+                }
+
+                // Anti-passback: kendaraan keluar
+                if ($direction === 'out' && ! $activeSession) {
+                    return [
+                        'tolak',
+                        "Kendaraan {$vehicle->plate_number} tidak berada di dalam area parkir (belum masuk atau sudah keluar)",
+                        false,
+                        'not_inside',
+                        null,
+                    ];
+                }
+
+                $aksi = ($direction === 'out') ? 'Keluar' : 'Masuk';
+
+                return [
+                    'izin',
+                    "Akses {$aksi} Tamu Diterima: {$izinTamu->guest_name} | Kendaraan: {$vehicle->plate_number}",
+                    true,
+                    null,
+                    $izinTamu,
+                ];
+            }
         }
 
         // ── KASUS 1: Wajah TIDAK dikenali (Asing) ──────────────────────────
@@ -174,6 +239,7 @@ class VerifikasiAksesController extends Controller
                 'Wajah tidak dikenal atau belum terdaftar sebagai member',
                 false,
                 'face_unknown',
+                null,
             ];
         }
 
@@ -184,6 +250,7 @@ class VerifikasiAksesController extends Controller
                 "Member {$member->name} saat ini berstatus tidak aktif",
                 false,
                 'member_inactive',
+                null,
             ];
         }
 
@@ -193,6 +260,7 @@ class VerifikasiAksesController extends Controller
                 'menunggu',
                 "Wajah {$member->name} terkonfirmasi. Menunggu pembacaan plat nomor...",
                 false,
+                null,
                 null,
             ];
         }
@@ -204,6 +272,7 @@ class VerifikasiAksesController extends Controller
                 "Plat kendaraan {$plateTeks} tidak terdaftar di sistem",
                 false,
                 'plate_unregistered',
+                null,
             ];
         }
 
@@ -216,6 +285,7 @@ class VerifikasiAksesController extends Controller
                 "Wajah {$member->name} tidak cocok dengan pemilik plat {$plateTeks} (milik {$pemilikPlat})",
                 false,
                 'driver_mismatch',
+                null,
             ];
         }
 
@@ -227,6 +297,7 @@ class VerifikasiAksesController extends Controller
                 "Langganan parkir untuk {$member->name} tidak aktif atau sudah habis masa berlakunya",
                 false,
                 'subscription_expired',
+                null,
             ];
         }
 
@@ -243,6 +314,7 @@ class VerifikasiAksesController extends Controller
                 "Kendaraan {$vehicle->plate_number} sudah berada di dalam area parkir (belum keluar)",
                 false,
                 'already_inside',
+                null,
             ];
         }
 
@@ -253,6 +325,7 @@ class VerifikasiAksesController extends Controller
                 "Kendaraan {$vehicle->plate_number} tidak berada di dalam area parkir (belum masuk atau sudah keluar)",
                 false,
                 'not_inside',
+                null,
             ];
         }
 
@@ -268,6 +341,7 @@ class VerifikasiAksesController extends Controller
             'izin',
             "Akses {$aksi} Diterima: {$member->name} | Kendaraan: {$vehicle->plate_number}{$catatan}",
             true,
+            null,
             null,
         ];
     }
@@ -285,27 +359,33 @@ class VerifikasiAksesController extends Controller
         ?string $plateDetected,
         ?float $distance,
         string $direction = 'in',
-        ?string $reason = null
+        ?string $reason = null,
+        ?GuestAccessPermission $izinTamu = null
     ): void {
         $isApproved = ($izinGate === 'BUKA');
+        $isModeТamu = $izinTamu !== null;
 
-        if ($isApproved && $member && $vehicle) {
+        // Untuk mode tamu: member yang dipakai di AccessRequest adalah pemilik kendaraan
+        $effectiveMember = $isModeТamu ? $vehicle?->member : $member;
+
+        if ($isApproved && $effectiveMember && $vehicle) {
             $isExit = ($direction === 'out');
 
             // Buat catatan AccessRequest (auto_approved)
             $accessRequest = AccessRequest::create([
-                'member_id' => $member->id,
-                'vehicle_id' => $vehicle->id,
-                'gate' => $state->gate,
-                'direction' => $direction,
-                'reason' => null,
-                'plate_detected' => $plateDetected ?? $vehicle->plate_number,
-                'plate_match' => true,
-                'face_match' => true,
-                'face_distance' => $distance,
-                'status' => 'auto_approved',
-                'requested_at' => now(),
-                'responded_at' => now(),
+                'member_id'                  => $effectiveMember->id,
+                'vehicle_id'                 => $vehicle->id,
+                'gate'                       => $state->gate,
+                'direction'                  => $direction,
+                'reason'                     => null,
+                'guest_access_permission_id' => $izinTamu?->id,
+                'plate_detected'             => $plateDetected ?? $vehicle->plate_number,
+                'plate_match'                => true,
+                'face_match'                 => ! $isModeТamu,   // false untuk mode tamu
+                'face_distance'              => $isModeТamu ? null : $distance,
+                'status'                     => 'auto_approved',
+                'requested_at'               => now(),
+                'responded_at'               => now(),
             ]);
 
             if ($isExit) {
@@ -314,52 +394,68 @@ class VerifikasiAksesController extends Controller
                     ->where('status', 'active')
                     ->update([
                         'exit_access_request_id' => $accessRequest->id,
-                        'exit_time' => now(),
-                        'status' => 'completed',
+                        'exit_time'              => now(),
+                        'status'                 => 'completed',
                     ]);
+
+                // Update izin tamu: tandai sudah keluar
+                if ($izinTamu) {
+                    $izinTamu->update([
+                        'used_exit' => true,
+                        'exit_at'   => now(),
+                    ]);
+                }
 
                 $gateStatus = 'PALANG TERBUKA - KENDARAAN KELUAR';
             } else {
                 // Kendaraan Masuk: buat sesi parkir aktif baru
                 ParkingSession::create([
-                    'member_id' => $member->id,
-                    'vehicle_id' => $vehicle->id,
+                    'member_id'              => $effectiveMember->id,
+                    'vehicle_id'             => $vehicle->id,
                     'entry_access_request_id' => $accessRequest->id,
-                    'entry_time' => now(),
-                    'status' => 'active',
+                    'entry_time'             => now(),
+                    'status'                 => 'active',
                 ]);
+
+                // Update izin tamu: tandai sudah masuk
+                if ($izinTamu) {
+                    $izinTamu->update([
+                        'used_entry' => true,
+                        'entry_at'   => now(),
+                    ]);
+                }
 
                 $gateStatus = 'PALANG TERBUKA - KENDARAAN MASUK';
             }
 
             // Update state gerbang untuk dibaca ESP32
             $state->update([
-                'trigger' => false,
-                'izin' => 'BUKA',
-                'status' => $gateStatus,
-                'face_match' => true,
-                'face_member_id' => $member->id,
-                'face_distance' => $distance,
-                'plate_match' => true,
-                'plate_member_id' => $member->id,
+                'trigger'          => false,
+                'izin'             => 'BUKA',
+                'status'           => $gateStatus,
+                'face_match'       => ! $isModeТamu,
+                'face_member_id'   => $isModeТamu ? null : $effectiveMember->id,
+                'face_distance'    => $isModeТamu ? null : $distance,
+                'plate_match'      => true,
+                'plate_member_id'  => $effectiveMember->id,
                 'plate_vehicle_id' => $vehicle->id,
-                'plate_detected' => $plateDetected ?? $vehicle->plate_number,
+                'plate_detected'   => $plateDetected ?? $vehicle->plate_number,
             ]);
         } else {
             // Akses Ditolak -> Buat catatan AccessRequest (denied)
             AccessRequest::create([
-                'member_id' => $member?->id,
-                'vehicle_id' => $vehicle?->id,
-                'gate' => $state->gate,
-                'direction' => $direction,
+                'member_id'      => $member?->id,
+                'vehicle_id'     => $vehicle?->id,
+                'gate'           => $state->gate,
+                'direction'      => $direction,
                 'plate_detected' => $plateDetected ?? 'UNKNOWN',
-                'plate_match' => $vehicle !== null,
-                'face_match' => $member !== null,
-                'face_distance' => $distance,
-                'status' => 'denied',
-                'reason' => $reason ?? substr($keterangan, 0, 30),
-                'requested_at' => now(),
-                'responded_at' => now(),
+                'plate_match'    => $vehicle !== null,
+                'face_match'     => $member !== null,
+                'face_distance'  => $distance,
+                'status'         => 'denied',
+                'reason'         => $reason ?? substr($keterangan, 0, 30),
+                'requested_at'   => now(),
+                'responded_at'   => now(),
             ]);
 
             // Format keterangan ringkas untuk status gate ESP32
@@ -372,16 +468,16 @@ class VerifikasiAksesController extends Controller
 
             // Update state gerbang untuk dibaca ESP32 (TOLAK)
             $state->update([
-                'trigger' => false,
-                'izin' => 'TOLAK',
-                'status' => $gateText,
-                'face_match' => $member !== null,
-                'face_member_id' => $member?->id,
-                'face_distance' => $distance,
-                'plate_match' => $vehicle !== null,
-                'plate_member_id' => $vehicle?->member_id,
+                'trigger'          => false,
+                'izin'             => 'TOLAK',
+                'status'           => $gateText,
+                'face_match'       => $member !== null,
+                'face_member_id'   => $member?->id,
+                'face_distance'    => $distance,
+                'plate_match'      => $vehicle !== null,
+                'plate_member_id'  => $vehicle?->member_id,
                 'plate_vehicle_id' => $vehicle?->id,
-                'plate_detected' => $plateDetected,
+                'plate_detected'   => $plateDetected,
             ]);
         }
     }
